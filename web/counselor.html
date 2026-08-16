@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>辅导员端 · 智课堂</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .grid-4 { grid-template-columns: repeat(4,1fr); }
+  @media (max-width:900px){ .grid-4{ grid-template-columns:1fr; } }
+  .light { color: var(--text-sub); font-size: 12.5px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ok{color:var(--ok)} .bad{color:var(--absent)}
+  .reason { display:inline-block; margin:2px 4px 2px 0; padding:2px 8px; border-radius:4px;
+            font-size:11.5px; background:var(--absent-soft); color:var(--absent); }
+  .reason.hw { background:var(--pending-soft); color:var(--pending); }
+</style>
+</head>
+<body>
+<main class="content" style="padding:24px 28px 48px;max-width:1160px;margin:0 auto;width:100%"></main>
+
+<script src="js/api.js"></script>
+<script src="js/demo.js"></script>
+<script>
+(function () {
+  "use strict";
+  var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
+
+  demo.initDemo("辅导员端").then(function () {
+    demo.notifWatcher();
+    var m = document.querySelector("main.content");
+    demo.buildTabs(m, [
+      { key: "overview", label: "总览预警", render: renderOverview },
+      { key: "students", label: "学生档案", render: renderStudents },
+      { key: "classes", label: "班级概览", render: renderClasses }
+    ]);
+  });
+
+  /* ---------- 总览预警 ---------- */
+  function renderOverview(el) {
+    el.innerHTML =
+      '<div class="grid grid-4" style="margin-bottom:16px">' +
+      '<div class="card stat-card"><div class="stat-label">管辖班级</div><div class="stat-value" id="ov-class">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">学生总数</div><div class="stat-value" id="ov-stu">—</div></div>' +
+      '<div class="card stat-card stat-ok"><div class="stat-label">平均出勤率</div><div class="stat-value" id="ov-rate">—</div></div>' +
+      '<div class="card stat-card stat-absent"><div class="stat-label">预警学生</div><div class="stat-value" id="ov-warn">—</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="card-title">学业预警名单（出勤 + 作业自动研判）</div><div id="warn-body"></div></div>';
+
+    api.get("/api/counselor/stat").then(function (d) {
+      $("ov-class").textContent = d.class_count;
+      $("ov-stu").textContent = d.student_total;
+      $("ov-rate").textContent = d.avg_attendance_rate === null ? "—" : Math.round(d.avg_attendance_rate * 100) + "%";
+      $("ov-warn").textContent = d.warning_count;
+    });
+
+    api.get("/api/counselor/warnings").then(function (list) {
+      if (!list || !list.length) { $("warn-body").innerHTML = '<div class="empty">暂无预警学生</div>'; return; }
+      $("warn-body").innerHTML =
+        '<div class="table-wrap"><table class="tbl"><thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>出勤率</th><th>缺勤</th><th>预警原因</th></tr></thead><tbody>' +
+        list.map(function (w) {
+          var rate = w.attendance_rate === null ? "—" : Math.round(w.attendance_rate * 100) + "%";
+          var reasons = (w.reasons || []).map(function (r) {
+            return '<span class="reason' + (r.indexOf("作业") >= 0 ? " hw" : "") + '">' + esc(r) + "</span>";
+          }).join("");
+          return "<tr><td>" + esc(w.student_no) + "</td><td><b>" + esc(w.name) + "</b></td><td>" + esc(w.class_name || "—") +
+            "</td><td>" + rate + "</td><td>" + esc(w.absent_count) + " 次</td><td>" + reasons + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    });
+  }
+
+  /* ---------- 学生档案 ---------- */
+  function renderStudents(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">学生列表</div>' +
+      '<div class="row" style="margin-bottom:8px"><input id="stu-search" class="input" style="flex:1;min-width:200px" placeholder="搜索学号/姓名">' +
+      '<button class="btn btn-outline btn-sm" id="stu-load">加载学生</button></div><div id="stu-list"></div></div>' +
+      '<div class="card"><div class="card-title">学生档案详情</div><div id="stu-detail"><div class="empty">点击左侧学生查看档案</div></div></div>';
+
+    $("stu-load").addEventListener("click", loadStudents);
+    loadStudents();
+
+    function loadStudents() {
+      var kw = $("stu-search").value.trim();
+      api.get("/api/counselor/students" + (kw ? "?keyword=" + encodeURIComponent(kw) : "")).then(function (list) {
+        if (!list || !list.length) { $("stu-list").innerHTML = '<div class="empty">暂无学生</div>'; return; }
+        $("stu-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>学号</th><th>姓名</th><th>班级</th><th></th></tr></thead><tbody>' +
+          list.map(function (s) {
+            return '<tr><td>' + esc(s.student_no) + '</td><td><b>' + esc(s.name) + "</b></td><td>" + esc(s.class_name || s.class_id || "—") +
+              '</td><td><button class="btn btn-outline btn-sm" data-no="' + esc(s.student_no) + '">查看档案</button></td></tr>';
+          }).join("") + "</tbody></table></div>";
+        $("stu-list").querySelectorAll("button[data-no]").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var no = b.getAttribute("data-no");
+            $("stu-detail").innerHTML = '<div class="light">加载档案中…</div>';
+            api.get("/api/counselor/student/" + no + "/profile").then(function (d) {
+              renderProfile(d);
+            }).catch(function (e) { $("stu-detail").innerHTML = '<div class="bad">' + esc(e.message || "加载失败") + "</div>"; });
+          });
+        });
+      });
+    }
+
+    function renderProfile(d) {
+      // 基本信息（字段防御性）
+      var info = d.student || d.info || d;
+      var h = '<div class="grid grid-2" style="margin-bottom:16px">';
+      h += '<div class="card"><div class="card-title">基本信息</div><div class="light" style="line-height:2">';
+      var rows = [
+        ["学号", info.student_no], ["姓名", info.name], ["班级", info.class_name || info.class_id],
+        ["专业", info.major], ["院系", info.department], ["电话", info.phone]
+      ];
+      rows.forEach(function (r) { if (r[1] !== undefined && r[1] !== null) h += r[0] + "：" + esc(r[1]) + "<br>"; });
+      h += "</div></div>";
+      // 出勤统计
+      var rate = d.attendance_rate !== undefined ? d.attendance_rate : (d.rate);
+      if (rate !== undefined && rate !== null) {
+        h += '<div class="card" style="display:flex;align-items:center;gap:16px"><div class="card-title" style="margin:0">出勤率</div>' +
+          demo.ringHtml(rate) + "<div class='light'>已到 " + esc(d.attended ?? "—") + " 次</div></div>";
+      }
+      h += "</div>";
+      // 最近考勤
+      var recent = d.recent_list || d.recent || [];
+      h += '<div class="card" style="margin-bottom:16px"><div class="card-title">最近考勤</div>';
+      if (recent.length) {
+        h += '<div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>日期</th><th>状态</th><th>时间</th></tr></thead><tbody>' +
+          recent.slice(0, 10).map(function (r) {
+            return "<tr><td>" + esc(r.course_name || r.course_id) + "</td><td>" + esc(r.attendance_date) + "</td><td>" + esc(r.status_cn || r.status) +
+              "</td><td>" + demo.shortTime(r.check_in_time) + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      } else h += '<div class="empty">暂无考勤记录</div>';
+      h += "</div>";
+      $("stu-detail").innerHTML = h;
+    }
+  }
+
+  /* ---------- 班级概览 ---------- */
+  function renderClasses(el) {
+    el.innerHTML = '<div class="card"><div class="card-title">班级概览</div><div id="cls-body"></div></div>';
+    api.get("/api/counselor/classes").then(function (list) {
+      if (!list || !list.length) { $("cls-body").innerHTML = '<div class="empty">暂无管辖班级</div>'; return; }
+      $("cls-body").innerHTML =
+        '<div class="table-wrap"><table class="tbl"><thead><tr><th>班级</th><th>年级</th><th>专业</th><th>院系</th><th>人数</th></tr></thead><tbody>' +
+        list.map(function (c) {
+          return "<tr><td><b>" + esc(c.class_name) + "</b>（" + esc(c.class_id) + "）</td><td>" + esc(c.grade || "—") +
+            "</td><td>" + esc(c.major || "—") + "</td><td>" + esc(c.department || "—") + "</td><td>" + esc(c.student_count) + " 人</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>管理端 · 智课堂</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .grid-4 { grid-template-columns: repeat(4,1fr); }
+  @media (max-width:900px){ .grid-4{ grid-template-columns:repeat(2,1fr); } .grid-2{ grid-template-columns:1fr; } }
+  .light { color: var(--text-sub); font-size: 12.5px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ok{color:var(--ok)} .bad{color:var(--absent)}
+  .seg { display:flex; gap:6px; }
+  .seg button { padding:6px 14px; border:1px solid var(--border); background:#fff; border-radius:6px;
+                cursor:pointer; font-size:13px; color:var(--text-sub); font-family:inherit; }
+  .seg button.active { background:var(--blue-grad); color:#fff; border-color:transparent; }
+  .trend { display:flex; align-items:flex-end; gap:12px; height:130px; padding:6px 2px 0; }
+  .trend .col { flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; height:100%; }
+  .trend .stick { width:70%; max-width:40px; border-radius:5px 5px 0 0; background:var(--blue-grad);
+                  min-height:3px; transition:height .6s; }
+  .trend .txt { font-size:11px; color:var(--text-sub); }
+</style>
+</head>
+<body>
+<main class="content" style="padding:24px 28px 48px;max-width:1160px;margin:0 auto;width:100%"></main>
+
+<script src="js/api.js"></script>
+<script src="js/demo.js"></script>
+<script>
+(function () {
+  "use strict";
+  var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
+
+  demo.initDemo("管理端").then(function () {
+    demo.notifWatcher();
+    var m = document.querySelector("main.content");
+    demo.buildTabs(m, [
+      { key: "board", label: "数据看板", render: renderBoard },
+      { key: "users", label: "人员管理", render: renderUsers },
+      { key: "courses", label: "课程班级", render: renderCourses },
+      { key: "enroll", label: "选课课表", render: renderEnroll },
+      { key: "audit", label: "审计日志", render: renderAudit }
+    ]);
+  });
+
+  /* ---------- 数据看板 ---------- */
+  function renderBoard(el) {
+    el.innerHTML =
+      '<div class="grid grid-4" style="margin-bottom:16px">' +
+      '<div class="card stat-card"><div class="stat-label">学生</div><div class="stat-value" id="b-s">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">教师</div><div class="stat-value" id="b-t">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">辅导员</div><div class="stat-value" id="b-c">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">课程</div><div class="stat-value" id="b-course">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">班级</div><div class="stat-value" id="b-class">—</div></div>' +
+      '<div class="card stat-card stat-ok"><div class="stat-label">签到记录</div><div class="stat-value" id="b-att">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">作业</div><div class="stat-value" id="b-hw">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">提交</div><div class="stat-value" id="b-sub">—</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="card-title">近 7 日签到趋势</div><div class="trend" id="b-trend"></div></div>';
+
+    api.get("/api/admin/stat/overview").then(function (d) {
+      var map = { "b-s": d.student_count, "b-t": d.teacher_count, "b-c": d.counselor_count,
+        "b-course": d.course_count, "b-class": d.class_count, "b-att": d.attendance_count,
+        "b-hw": d.homework_count, "b-sub": d.submission_count };
+      Object.keys(map).forEach(function (id) { $(id).textContent = map[id] ?? "—"; });
+      var trend = d.attendance_trend || [];
+      var max = Math.max.apply(null, trend.map(function (t) { return t.count || 0; }).concat([1]));
+      $("b-trend").innerHTML = trend.map(function (t) {
+        var h = Math.round(((t.count || 0) / max) * 100);
+        return '<div class="col"><div class="stick" style="height:' + h + '%"></div>' +
+          '<div class="txt">' + esc(t.count || 0) + '</div><div class="txt">' + esc((t.date || "").slice(5)) + "</div></div>";
+      }).join("");
+    });
+  }
+
+  /* ---------- 人员管理 ---------- */
+  function renderUsers(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">新建人员</div>' +
+      '<div class="row"><select id="u-role" class="input" style="width:110px"><option value="student">学生</option><option value="teacher">教师</option><option value="counselor">辅导员</option></select>' +
+      '<input id="u-no" class="input" style="width:130px" placeholder="编号">' +
+      '<input id="u-name" class="input" style="flex:1;min-width:120px" placeholder="姓名">' +
+      '<input id="u-phone" class="input" style="width:130px" placeholder="手机号">' +
+      '<button class="btn btn-primary" id="u-create">创建</button></div></div>' +
+      '<div class="card"><div class="card-title">人员列表</div>' +
+      '<div class="row" style="margin-bottom:8px"><div class="seg" id="u-seg">' +
+      '<button data-role="student" class="active">学生</button><button data-role="teacher">教师</button><button data-role="counselor">辅导员</button></div>' +
+      '<input id="u-search" class="input" style="flex:1;min-width:150px" placeholder="搜索">' +
+      '<button class="btn btn-outline btn-sm" id="u-refresh">查询</button></div><div id="u-list"></div></div>';
+
+    var curRole = "student";
+    $("u-seg").addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-role]");
+      if (!b) return;
+      curRole = b.getAttribute("data-role");
+      $("u-seg").querySelectorAll("button").forEach(function (x) { x.classList.toggle("active", x === b); });
+      loadUsers();
+    });
+    $("u-refresh").addEventListener("click", loadUsers);
+    loadUsers();
+
+    function loadUsers() {
+      var kw = $("u-search").value.trim();
+      api.get("/api/admin/users?role=" + curRole + (kw ? "&keyword=" + encodeURIComponent(kw) : "")).then(function (d) {
+        var list = d.items || d.list || d;
+        if (!list || !list.length) { $("u-list").innerHTML = '<div class="empty">暂无数据</div>'; return; }
+        var cols = curRole === "student"
+          ? ["学号", "姓名", "班级", "状态", "操作"]
+          : [curRole === "teacher" ? "工号" : "编号", "姓名", "院系", "状态", "操作"];
+        var rows = list.map(function (u) {
+          var id = u.user_id || u.student_no || u.teacher_no || u.counselor_no || u.user_no;
+          var name = u.name || "";
+          var dept = u.class_name || u.class_id || u.department || u.title || "—";
+          var st = u.status === 0
+            ? '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">禁用</span>'
+            : '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">正常</span>';
+          return "<tr><td>" + esc(id) + '</td><td><b>' + esc(name) + "</b></td><td>" + esc(dept) + "</td><td>" + st +
+            '</td><td><div class="row">' +
+            '<button class="btn btn-outline btn-sm" data-reset="' + curRole + "/" + esc(id) + '">重置密码</button>' +
+            '<button class="btn btn-outline btn-sm" data-toggle="' + curRole + "/" + esc(id) + '">' + (u.status === 0 ? "启用" : "禁用") + "</button>" +
+            "</div></td></tr>";
+        }).join("");
+        $("u-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr>' + cols.map(function (c) { return "<th>" + c + "</th>"; }).join("") +
+          "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+        $("u-list").querySelectorAll("button[data-reset]").forEach(function (b) {
+          b.addEventListener("click", async function () {
+            if (!confirm("重置该用户密码为 123456？")) return;
+            try { await api.post("/api/admin/users/" + b.getAttribute("data-reset") + "/reset-password"); alert("已重置为 123456"); }
+            catch (e) { alert(e.message || "操作失败"); }
+          });
+        });
+        $("u-list").querySelectorAll("button[data-toggle]").forEach(function (b) {
+          b.addEventListener("click", async function () {
+            try { await api.post("/api/admin/users/" + b.getAttribute("data-toggle") + "/toggle-status"); loadUsers(); }
+            catch (e) { alert(e.message || "操作失败"); }
+          });
+        });
+      });
+    }
+
+    $("u-create").addEventListener("click", async function () {
+      var role = $("u-role").value, no = $("u-no").value.trim(), name = $("u-name").value.trim();
+      if (!no || !name) { alert("请填写编号和姓名"); return; }
+      var body = { role: role, user_no: no, name: name };
+      var phone = $("u-phone").value.trim();
+      if (phone) body.phone = phone;
+      var btn = this; btn.disabled = true; btn.textContent = "创建中…";
+      try { await api.post("/api/admin/users", body); alert("已创建"); $("u-no").value = ""; $("u-name").value = ""; $("u-phone").value = ""; }
+      catch (e) { alert(e.message || "创建失败"); }
+      btn.disabled = false; btn.textContent = "创建";
+    });
+  }
+
+  /* ---------- 课程班级 ---------- */
+  function renderCourses(el) {
+    el.innerHTML =
+      '<div class="grid grid-2" style="margin-bottom:16px">' +
+      '<div class="card"><div class="card-title">新建课程</div>' +
+      '<div class="row"><input id="c-code" class="input" style="width:110px" placeholder="课程代码">' +
+      '<input id="c-name" class="input" style="flex:1;min-width:120px" placeholder="课程名">' +
+      '<input id="c-teacher" class="input" style="width:90px" placeholder="教师ID"></div>' +
+      '<div class="row" style="margin-top:8px"><input id="c-credit" type="number" class="input" style="width:80px" placeholder="学分">' +
+      '<input id="c-hours" type="number" class="input" style="width:80px" placeholder="学时">' +
+      '<button class="btn btn-primary" id="c-create">创建</button></div></div>' +
+      '<div class="card"><div class="card-title">新建班级</div>' +
+      '<div class="row"><input id="cl-code" class="input" style="width:110px" placeholder="班级代码">' +
+      '<input id="cl-name" class="input" style="flex:1;min-width:120px" placeholder="班级名"></div>' +
+      '<div class="row" style="margin-top:8px"><input id="cl-major" class="input" style="flex:1" placeholder="专业">' +
+      '<button class="btn btn-primary" id="cl-create">创建</button></div></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">课程列表</div><div id="c-list"></div></div>' +
+      '<div class="card"><div class="card-title">班级列表</div><div id="cl-list"></div></div>';
+
+    loadCourses(); loadClasses();
+
+    function loadCourses() {
+      api.get("/api/admin/courses").then(function (list) {
+        if (!list || !list.length) { $("c-list").innerHTML = '<div class="empty">暂无课程</div>'; return; }
+        $("c-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>代码</th><th>课程</th><th>教师</th><th>学分</th><th>学期</th></tr></thead><tbody>' +
+          list.map(function (c) {
+            return "<tr><td>" + esc(c.course_id || c.course_code) + "</td><td><b>" + esc(c.course_name) + "</b></td><td>" +
+              esc(c.teacher_name || c.teacher_id || "—") + "</td><td>" + esc(c.credit ?? "—") + "</td><td>" + esc(c.semester || "—") + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      });
+    }
+    function loadClasses() {
+      api.get("/api/admin/classes").then(function (list) {
+        if (!list || !list.length) { $("cl-list").innerHTML = '<div class="empty">暂无班级</div>'; return; }
+        $("cl-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>代码</th><th>班级</th><th>专业</th><th>人数</th></tr></thead><tbody>' +
+          list.map(function (c) {
+            return "<tr><td>" + esc(c.class_id || c.class_code) + "</td><td><b>" + esc(c.class_name) + "</b></td><td>" +
+              esc(c.major || "—") + "</td><td>" + esc(c.student_count ?? "—") + " 人</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      });
+    }
+
+    $("c-create").addEventListener("click", async function () {
+      var body = { course_id: $("c-code").value.trim(), course_name: $("c-name").value.trim(), teacher_id: $("c-teacher").value.trim() };
+      if (!body.course_id || !body.course_name) { alert("请填写课程代码和名称"); return; }
+      if ($("c-credit").value) body.credit = parseFloat($("c-credit").value);
+      if ($("c-hours").value) body.hours = parseInt($("c-hours").value, 10);
+      try { await api.post("/api/admin/courses", body); alert("已创建"); loadCourses(); }
+      catch (e) { alert(e.message || "创建失败"); }
+    });
+    $("cl-create").addEventListener("click", async function () {
+      var body = { class_id: $("cl-code").value.trim(), class_name: $("cl-name").value.trim() };
+      if ($("cl-major").value.trim()) body.major = $("cl-major").value.trim();
+      if (!body.class_id || !body.class_name) { alert("请填写班级代码和名称"); return; }
+      try { await api.post("/api/admin/classes", body); alert("已创建"); loadClasses(); }
+      catch (e) { alert(e.message || "创建失败"); }
+    });
+  }
+
+  /* ---------- 选课课表 ---------- */
+  function renderEnroll(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">添加选课</div>' +
+      '<div class="row"><input id="e-no" class="input" style="width:130px" placeholder="学生学号">' +
+      '<input id="e-course" class="input" style="width:130px" placeholder="课程代码">' +
+      '<button class="btn btn-primary" id="e-add">添加</button></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">选课记录</div><div id="e-list"></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">添加课表</div>' +
+      '<div class="row"><input id="s-course" class="input" style="width:120px" placeholder="课程代码">' +
+      '<input id="s-class" class="input" style="width:120px" placeholder="班级代码">' +
+      '<select id="s-week" class="input" style="width:90px">' + [1,2,3,4,5,6,7].map(function (d) { return "<option value='" + d + "'>周" + "一二三四五六日"[d-1] + "</option>"; }).join("") + '</select>' +
+      '<input id="s-start" type="time" class="input" style="width:110px" value="08:00">' +
+      '<input id="s-end" type="time" class="input" style="width:110px" value="09:40">' +
+      '<input id="s-room" class="input" style="width:110px" placeholder="教室">' +
+      '<button class="btn btn-primary" id="s-add">添加</button></div></div>' +
+      '<div class="card"><div class="card-title">课表列表</div><div id="s-list"></div></div>';
+
+    loadEnroll(); loadSched();
+
+    function loadEnroll() {
+      api.get("/api/admin/enrollments").then(function (list) {
+        if (!list || !list.length) { $("e-list").innerHTML = '<div class="empty">暂无选课记录</div>'; return; }
+        $("e-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>学生</th><th>状态</th><th></th></tr></thead><tbody>' +
+          list.slice(0, 30).map(function (e) {
+            return "<tr><td>" + esc(e.course_name || e.course_id) + "</td><td>" + esc(e.student_name || e.student_no) +
+              "</td><td>" + (e.status === 1 ? "在选" : "退选") +
+              '</td><td><button class="btn btn-danger btn-sm" data-enroll="' + e.id + '">退选</button></td></tr>';
+          }).join("") + "</tbody></table></div>";
+        $("e-list").querySelectorAll("button[data-enroll]").forEach(function (b) {
+          b.addEventListener("click", async function () {
+            if (!confirm("确认退选？")) return;
+            try {
+              await fetch((location.origin || "http://127.0.0.1:8000") + "/api/admin/enrollments/" + b.getAttribute("data-enroll"),
+                { method: "DELETE", credentials: "same-origin" });
+              loadEnroll();
+            } catch (e) { alert(e.message || "操作失败"); }
+          });
+        });
+      });
+    }
+    function loadSched() {
+      api.get("/api/admin/schedules").then(function (list) {
+        if (!list || !list.length) { $("s-list").innerHTML = '<div class="empty">暂无课表</div>'; return; }
+        $("s-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>班级</th><th>星期</th><th>时间</th><th>教室</th></tr></thead><tbody>' +
+          list.slice(0, 30).map(function (s) {
+            return "<tr><td>" + esc(s.course_id || s.course_name) + "</td><td>" + esc(s.class_id || "—") + "</td><td>周" + esc(s.weekday) +
+              "</td><td>" + esc(s.start_time || "") + " - " + esc(s.end_time || "") + "</td><td>" + esc(s.classroom || "—") + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      });
+    }
+
+    $("e-add").addEventListener("click", async function () {
+      var student_no = $("e-no").value.trim(), course_id = $("e-course").value.trim();
+      if (!student_no || !course_id) { alert("请填写学号和课程代码"); return; }
+      try { await api.post("/api/admin/enrollments", { student_no: student_no, course_id: course_id }); alert("已添加"); loadEnroll(); }
+      catch (e) { alert(e.message || "操作失败"); }
+    });
+    $("s-add").addEventListener("click", async function () {
+      var body = {
+        course_id: $("s-course").value.trim(), class_id: $("s-class").value.trim(),
+        weekday: parseInt($("s-week").value, 10),
+        start_time: $("s-start").value, end_time: $("s-end").value
+      };
+      var room = $("s-room").value.trim();
+      if (room) body.classroom = room;
+      if (!body.course_id || !body.class_id) { alert("请填写课程和班级代码"); return; }
+      try { await api.post("/api/admin/schedules", body); alert("已添加"); loadSched(); }
+      catch (e) { alert(e.message || "操作失败"); }
+    });
+  }
+
+  /* ---------- 审计日志 ---------- */
+  function renderAudit(el) {
+    el.innerHTML =
+      '<div class="card"><div class="card-title">审计日志</div>' +
+      '<div class="row" style="margin-bottom:8px"><input id="a-action" class="input" style="width:180px" placeholder="按操作类型过滤">' +
+      '<button class="btn btn-outline btn-sm" id="a-load">查询</button></div><div id="a-list"></div></div>';
+    loadAudit();
+    $("a-load").addEventListener("click", loadAudit);
+
+    function loadAudit() {
+      var action = $("a-action").value.trim();
+      api.get("/api/admin/audit?page=1&page_size=30" + (action ? "&action=" + encodeURIComponent(action) : "")).then(function (d) {
+        var list = d.items || d.list || d;
+        if (!list || !list.length) { $("a-list").innerHTML = '<div class="empty">暂无日志</div>'; return; }
+        $("a-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>操作</th><th>用户</th><th>角色</th><th>IP</th><th>时间</th></tr></thead><tbody>' +
+          list.map(function (a) {
+            return "<tr><td>" + esc(a.action || a.operation) + "</td><td>" + esc(a.user_id || "—") + "</td><td>" + esc(a.user_role || "—") +
+              "</td><td>" + esc(a.ip || "—") + "</td><td>" + demo.shortTime(a.create_time) + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      });
+    }
+  }
+})();
+</script>
+</body>
+</html>

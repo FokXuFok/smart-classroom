@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 智课堂 SmartClassroom</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh;
+         background: radial-gradient(1000px 500px at 85% -10%, rgba(30,58,138,.1), transparent),
+                     radial-gradient(800px 400px at -10% 110%, rgba(245,158,11,.08), transparent), var(--bg); }
+  .login-card { display: flex; width: 880px; max-width: 94vw; min-height: 520px;
+                background: var(--white); border-radius: 16px; overflow: hidden;
+                box-shadow: 0 20px 60px rgba(22,51,122,.16); }
+  .login-brand { flex: 1.15; background: var(--blue-grad); color: #fff; padding: 44px 40px;
+                 display: flex; flex-direction: column; }
+  .brand-logo { width: 52px; height: 52px; border-radius: 14px; background: rgba(255,255,255,.14);
+                display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
+  .brand-logo svg { width: 30px; height: 30px; }
+  .login-brand h1 { font-size: 30px; letter-spacing: 2px; }
+  .login-brand .en { font-size: 11px; letter-spacing: 4px; color: #9db4e8; margin: 4px 0 30px; }
+  .brand-points { display: flex; flex-direction: column; gap: 18px; margin-top: auto; }
+  .pt { display: flex; gap: 12px; align-items: flex-start; font-size: 12.5px; color: #c9d6f5; line-height: 1.55; }
+  .pt b { color: #fff; display: block; font-size: 14px; margin-bottom: 2px; }
+  .pt .ico { width: 34px; height: 34px; border-radius: 10px; background: rgba(255,255,255,.1);
+             display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .pt .ico svg { width: 18px; height: 18px; }
+  .brand-copy { margin-top: 28px; font-size: 11px; color: #8ea3dd; }
+  .login-form-side { flex: 1; padding: 44px 40px; display: flex; flex-direction: column; justify-content: center; }
+  .login-form-side h2 { font-size: 22px; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: var(--text-sub); margin-bottom: 22px; }
+  .form-item { margin-bottom: 16px; }
+  .form-item label { display: block; font-size: 13px; color: var(--text-sub); margin-bottom: 6px; }
+  .input { width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--radius);
+           font-size: 14px; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+  .input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(30,58,138,.1); }
+  .segment { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .segment button { padding: 9px 0; border: 1px solid var(--border); background: var(--white);
+                    border-radius: var(--radius); font-size: 13px; cursor: pointer; font-family: inherit;
+                    color: var(--text-sub); transition: all .15s; }
+  .segment button.active { background: var(--blue-grad); color: #fff; border-color: transparent; font-weight: 600; }
+  .form-error { display: flex; align-items: center; gap: 6px; color: var(--absent);
+                font-size: 13px; min-height: 20px; margin-bottom: 6px; }
+  .form-error svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4);
+             border-top-color: #fff; border-radius: 50%; display: inline-block;
+             animation: spin .7s linear infinite; }
+  .mt-16 { margin-top: 16px; }
+  .demo-accts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .demo-accts button { padding: 7px 0; border: 1px solid var(--border); background: var(--white);
+                       border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit;
+                       color: var(--text-sub); transition: all .15s; }
+  .demo-accts button:hover { border-color: var(--blue); color: var(--blue); background: #eef2fb; }
+  @media (max-width: 760px) { .login-brand { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <!-- 左：品牌区 -->
+  <div class="login-brand">
+    <div>
+      <div class="brand-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 9L12 4 2 9l10 5 10-5z"/><path d="M6 11.5V16c0 1.2 2.7 3 6 3s6-1.8 6-3v-4.5"/><path d="M22 9v5"/></svg>
+      </div>
+      <h1>智课堂</h1>
+      <div class="en">SMART&nbsp;CLASSROOM</div>
+    </div>
+    <div class="brand-points">
+      <div class="pt">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg></span>
+        <div><b>人脸 + 定位签到</b>双因子核验，200 米电子围栏，毫秒级完成课堂点名</div>
+      </div>
+      <div class="pt">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></span>
+        <div><b>在线编程作业</b>沙箱自动评测判分，AI 逐题反馈改进建议</div>
+      </div>
+      <div class="pt">
+        <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13" r="1" fill="currentColor"/><circle cx="15" cy="13" r="1" fill="currentColor"/><path d="M9.5 16.5h5"/></svg></span>
+        <div><b>AI 课程助教</b>7×24 智能答疑，匿名提问畅所欲言</div>
+      </div>
+    </div>
+    <div class="brand-copy">© 2026 全流程智慧课堂系统 · 大学生创新实践项目</div>
+  </div>
+
+  <!-- 右：登录表单 -->
+  <div class="login-form-side">
+    <h2>欢迎回来</h2>
+    <p class="sub">请使用您的学号 / 工号登录系统</p>
+
+    <div class="form-item">
+      <label>账号</label>
+      <input class="input" id="username" placeholder="学号 / 工号" autocomplete="username" maxlength="32">
+    </div>
+
+    <div class="form-item">
+      <label>密码</label>
+      <input class="input" id="password" type="password" placeholder="请输入密码" autocomplete="current-password" maxlength="64">
+    </div>
+
+    <div class="form-item">
+      <label>角色</label>
+      <div class="segment" id="role-seg">
+        <button type="button" data-role="student" class="active">学生</button>
+        <button type="button" data-role="teacher">教师</button>
+        <button type="button" data-role="counselor">辅导员</button>
+        <button type="button" data-role="admin">管理员</button>
+      </div>
+    </div>
+
+    <div class="form-error" id="err"></div>
+
+    <button class="btn btn-primary btn-lg" id="login-btn">登 录</button>
+
+    <p class="sub mt-16" style="margin-bottom:6px;text-align:center">
+      演示账号（点击自动填入并切换角色）：
+    </p>
+    <div class="demo-accts" id="demo-accts">
+      <button type="button" data-un="2024001" data-role="student">学生 2024001</button>
+      <button type="button" data-un="T001" data-role="teacher">教师 T001</button>
+      <button type="button" data-un="C001" data-role="counselor">辅导员 C001</button>
+      <button type="button" data-un="admin" data-role="admin">管理员 admin</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script>
+(function () {
+  "use strict";
+  // 认证由后端 httpOnly cookie 管理；登录成功后跳转对应端
+  var role = "student";
+  var seg = document.getElementById("role-seg");
+  seg.addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-role]");
+    if (!btn) return;
+    role = btn.getAttribute("data-role");
+    seg.querySelectorAll("button").forEach(function (b) { b.classList.toggle("active", b === btn); });
+  });
+
+  // 演示账号一键填充：自动填账号并切换对应角色
+  document.getElementById("demo-accts").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-un]");
+    if (!btn) return;
+    role = btn.getAttribute("data-role");
+    document.getElementById("username").value = btn.getAttribute("data-un");
+    document.getElementById("password").value = "123456";
+    seg.querySelectorAll("button").forEach(function (b) {
+      b.classList.toggle("active", b.getAttribute("data-role") === role);
+    });
+    document.getElementById("password").focus();
+  });
+
+  var errEl = document.getElementById("err");
+  function showErr(msg) {
+    errEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><span></span>';
+    errEl.lastChild.textContent = msg;
+  }
+
+  var busy = false;
+  async function doLogin() {
+    if (busy) return;
+    var username = document.getElementById("username").value.trim();
+    var password = document.getElementById("password").value;
+    if (!username) return showErr("请输入账号");
+    if (!password) return showErr("请输入密码");
+    errEl.textContent = "";
+    busy = true;
+    var btn = document.getElementById("login-btn");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 登录中…';
+    try {
+      var data = await api.post("/api/auth/login",
+        { username: username, password: password, role: role }, { silent: true });
+      btn.innerHTML = "登录成功，正在跳转…";
+      location.href = data.role + ".html";
+    } catch (err) {
+      // "账号不存在"时提示可能是角色选错，引导点击下方演示账号
+      var msg = err.message || "登录失败，请稍后重试";
+      if ((err.code === 404 && msg.indexOf("账号不存在") >= 0) || msg.indexOf("账号不存在") >= 0) {
+        msg = "账号不存在：请确认账号与所选角色匹配，或点击下方演示账号一键填充";
+      }
+      showErr(msg);
+      btn.disabled = false;
+      btn.innerHTML = "登 录";
+      busy = false;
+    }
+  }
+
+  document.getElementById("login-btn").addEventListener("click", doLogin);
+  document.getElementById("password").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") doLogin();
+  });
+  document.getElementById("username").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") document.getElementById("password").focus();
+  });
+})();
+</script>
+</body>
+</html>

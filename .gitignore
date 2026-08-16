@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+models_cache/
+*.onnx
+.env
+venv/
+uploads/
+.idea/

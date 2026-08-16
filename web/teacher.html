@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>教师端 · 智课堂</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .grid-4 { grid-template-columns: repeat(4,1fr); }
+  @media (max-width:900px){ .grid-4{ grid-template-columns:1fr; } }
+  .light { color: var(--text-sub); font-size: 12.5px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  pre.out { background:#f8fafd; border:1px solid var(--border); border-radius:var(--radius);
+            padding:10px; font-size:12.5px; white-space:pre-wrap; }
+  .ok{color:var(--ok)} .bad{color:var(--absent)}
+  .live { display:inline-flex; align-items:center; gap:5px; color:var(--ok); font-weight:700; font-size:12px; }
+  .live::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--ok); animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.25; } }
+</style>
+</head>
+<body>
+<main class="content" style="padding:24px 28px 48px;max-width:1160px;margin:0 auto;width:100%"></main>
+
+<script src="js/api.js"></script>
+<script src="js/demo.js"></script>
+<script>
+(function () {
+  "use strict";
+  var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
+  var courseMap = {};
+
+  demo.initDemo("教师端").then(function () {
+    demo.notifWatcher();
+    var m = document.querySelector("main.content");
+    api.get("/api/teacher/courses").then(function (list) {
+      (list || []).forEach(function (c) { courseMap[c.course_id || c.course_code] = c; });
+    });
+    demo.buildTabs(m, [
+      { key: "overview", label: "总览", render: renderOverview },
+      { key: "checkin", label: "课堂签到", render: renderCheckin },
+      { key: "interact", label: "点名互动", render: renderInteract },
+      { key: "homework", label: "作业管理", render: renderHomework },
+      { key: "ai", label: "AI 助教", render: renderAI }
+    ]);
+  });
+
+  function courseOptions(selId, def) {
+    var sel = $(selId);
+    sel.innerHTML = Object.keys(courseMap).map(function (id) {
+      var c = courseMap[id];
+      return '<option value="' + id + '"' + (id === def ? " selected" : "") + ">" + esc(c.course_name) + "（" + id + "）</option>";
+    }).join("");
+  }
+
+  /* ---------- 总览 ---------- */
+  function renderOverview(el) {
+    el.innerHTML =
+      '<div class="grid grid-4" style="margin-bottom:16px">' +
+      '<div class="card stat-card"><div class="stat-label">教授课程</div><div class="stat-value" id="ov-course">' + Object.keys(courseMap).length + "</div></div>" +
+      '<div class="card stat-card"><div class="stat-label">签到会话</div><div class="stat-value" id="ov-sess">—</div></div>' +
+      '<div class="card stat-card stat-ok"><div class="stat-label">进行中</div><div class="stat-value" id="ov-live">—</div></div>' +
+      '<div class="card stat-card"><div class="stat-label">累计签到人次</div><div class="stat-value" id="ov-signed">—</div></div>' +
+      '</div>' +
+      (Object.keys(courseMap).length ?
+        '<div class="card"><div class="card-title">我的课程</div><div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>学分</th><th>学期</th><th>选课人数</th></tr></thead><tbody>' +
+        Object.keys(courseMap).map(function (id) {
+          var c = courseMap[id];
+          return "<tr><td><b>" + esc(c.course_name) + "</b><div class='light'>" + id + "</div></td><td>" + esc(c.credit ?? "—") +
+            "</td><td>" + esc(c.semester || "—") + "</td><td>" + esc(c.student_count ?? "—") + " 人</td></tr>";
+        }).join("") + "</tbody></table></div></div>" : "");
+
+    api.get("/api/teacher/checkin/sessions").then(function (list) {
+      $("ov-sess").textContent = list.length;
+      $("ov-live").textContent = list.filter(function (s) { return s.status === 1; }).length;
+      $("ov-signed").textContent = list.reduce(function (a, s) { return a + (s.signed_count || 0); }, 0);
+    });
+  }
+
+  /* ---------- 课堂签到 ---------- */
+  function renderCheckin(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">发起签到（人脸 + 定位双因子）</div>' +
+      '<div class="row"><select id="ck-course" class="input" style="flex:1;min-width:200px"></select>' +
+      '<input id="ck-min" type="number" class="input" value="5" style="width:90px" title="时长(分钟)">' +
+      '<input id="ck-range" type="number" class="input" value="200" style="width:90px" title="围栏(米)">' +
+      '<button class="btn btn-amber" id="ck-start">发起签到</button></div>' +
+      '<div class="light" style="margin-top:8px">学生需在围栏内通过人脸识别签到；发起后学生端会收到顶部横幅提醒。</div></div>' +
+      '<div class="card"><div class="card-title">签到会话</div><div id="ck-sessions"></div></div>';
+
+    courseOptions("ck-course");
+    loadSessions();
+
+    function loadSessions() {
+      api.get("/api/teacher/checkin/sessions").then(function (list) {
+        if (!list || !list.length) { $("ck-sessions").innerHTML = '<div class="empty">暂无会话，点击上方发起签到</div>'; return; }
+        $("ck-sessions").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>状态</th><th>课程</th><th>时间</th><th>围栏</th><th>已签</th><th>操作</th></tr></thead><tbody>' +
+          list.map(function (s) {
+            var st = s.status === 1 ? '<span class="live">进行中</span>' :
+              '<span class="badge" style="background:var(--muted-soft);color:var(--muted)">已结束</span>';
+            var act = s.status === 1
+              ? '<div class="row"><button class="btn btn-primary btn-sm" data-view="' + s.id + '">看板</button>' +
+                '<button class="btn btn-danger btn-sm" data-end="' + s.id + '">结束</button></div>'
+              : '<button class="btn btn-outline btn-sm" data-view="' + s.id + '">看板</button>';
+            return "<tr><td>" + st + "</td><td>" + esc(s.course_name || s.course_id) + "</td><td>" +
+              demo.shortTime(s.create_time) + "</td><td>" + esc(s.range_meters || "—") + " 米</td><td>" +
+              esc(s.signed_count || 0) + " 人</td><td>" + act + "</td></tr>";
+          }).join("") + "</tbody></table></div>" +
+          '<div id="ck-dash"></div>';
+        // 事件绑定
+        $("ck-sessions").querySelectorAll("button[data-view]").forEach(function (b) {
+          b.addEventListener("click", function () { viewDashboard(b.getAttribute("data-view")); });
+        });
+        $("ck-sessions").querySelectorAll("button[data-end]").forEach(function (b) {
+          b.addEventListener("click", async function () {
+            if (!confirm("结束该签到？未签学生将记缺勤")) return;
+            try {
+              var d = await api.post("/api/teacher/checkin/" + b.getAttribute("data-end") + "/end");
+              alert("已结束，记缺勤 " + (d.absent_created || 0) + " 人");
+              loadSessions();
+            } catch (e) { alert(e.message || "操作失败"); }
+          });
+        });
+      });
+    }
+
+    function viewDashboard(sid) {
+      var box = $("ck-dash");
+      box.innerHTML = '<div class="light">看板加载中…</div>';
+      api.get("/api/teacher/checkin/dashboard/" + sid).then(function (d) {
+        var students = d.students || [];
+        box.innerHTML =
+          '<div class="card-title" style="margin-top:14px">签到看板 · ' + esc(d.session.course_id) + "</div>" +
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>学号</th><th>姓名</th><th>状态</th><th>时间</th><th>相似度</th><th>操作</th></tr></thead><tbody>' +
+          (students.length ? students.map(function (s) {
+            var st = s.status === "未签到" || s.status === "缺勤"
+              ? '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">' + esc(s.status) + "</span>"
+              : '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">' + esc(s.status) + "</span>";
+            var act = s.review_status === 1
+              ? '<button class="btn btn-success btn-sm" data-rec="' + s.record_id + '" data-act="approve">通过</button>' +
+                '<button class="btn btn-danger btn-sm" data-rec="' + s.record_id + '" data-act="reject">驳回</button>'
+              : "";
+            return "<tr><td>" + esc(s.student_no) + "</td><td>" + esc(s.name) + "</td><td>" + st + "</td>" +
+              "<td>" + demo.shortTime(s.check_in_time) + "</td><td>" + esc(s.similarity1 ?? "—") + "</td><td><div class='row'>" + act + "</div></td></tr>";
+          }).join("") : '<tr><td colspan="6" class="light">该课程暂无选课学生</td></tr>') +
+          "</tbody></table></div>";
+        box.querySelectorAll("button[data-rec]").forEach(function (b) {
+          b.addEventListener("click", async function () {
+            var remark = prompt("备注（可留空）", "");
+            if (remark === null) return;
+            try {
+              await api.post("/api/teacher/checkin/attendance/" + b.getAttribute("data-rec") + "/review",
+                { action: b.getAttribute("data-act"), remark: remark });
+              viewDashboard(sid);
+            } catch (e) { alert(e.message || "操作失败"); }
+          });
+        });
+      }).catch(function (e) { box.innerHTML = '<div class="bad">' + esc(e.message || "加载失败") + "</div>"; });
+    }
+
+    $("ck-start").addEventListener("click", async function () {
+      var cid = $("ck-course").value;
+      if (!cid) { alert("请选择课程"); return; }
+      var btn = this; btn.disabled = true; btn.textContent = "发起中…";
+      try {
+        await api.post("/api/teacher/checkin/start", {
+          course_id: cid,
+          duration_minutes: parseInt($("ck-min").value, 10) || 5,
+          range_meters: parseInt($("ck-range").value, 10) || 200
+        });
+        alert("签到已发起，学生端将收到提醒");
+        loadSessions();
+      } catch (e) { alert(e.message || "发起失败"); }
+      btn.disabled = false; btn.textContent = "发起签到";
+    });
+  }
+
+  /* ---------- 点名互动 ---------- */
+  function renderInteract(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">课堂随机点名</div>' +
+      '<div class="row"><select id="pk-course" class="input" style="flex:1;min-width:200px"></select>' +
+      '<button class="btn btn-primary" id="pk-go">🎲 随机点名</button></div>' +
+      '<div class="row" style="margin-top:10px"><span id="pk-result" class="light">点名结果将推送给全班学生</span></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">记录互动（提问 / 评分）</div>' +
+      '<div class="row"><input id="it-student" class="input" style="width:140px" placeholder="学生学号">' +
+      '<select id="it-type" class="input" style="width:110px"><option value="question">提问</option><option value="rating">评分</option></select>' +
+      '<input id="it-content" class="input" style="flex:1;min-width:160px" placeholder="内容">' +
+      '<input id="it-score" type="number" class="input" style="width:80px" placeholder="1-5">' +
+      '<button class="btn btn-outline" id="it-save">保存</button></div></div>' +
+      '<div class="card"><div class="card-title">互动历史</div>' +
+      '<div class="row" style="margin-bottom:8px"><select id="it-course" class="input" style="flex:1;min-width:200px"></select>' +
+      '<button class="btn btn-outline btn-sm" id="it-refresh">刷新</button></div><div id="it-list"></div></div>';
+
+    courseOptions("pk-course");
+    courseOptions("it-course");
+
+    loadInteractions();
+    function loadInteractions() {
+      var cid = $("it-course").value;
+      api.get("/api/interaction/list?course_id=" + (cid || "")).then(function (list) {
+        if (!list || !list.length) { $("it-list").innerHTML = '<div class="empty">暂无互动记录</div>'; return; }
+        var map = { question: "提问", rating: "评分", random_pick: "随机点名" };
+        $("it-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>类型</th><th>学生</th><th>内容</th><th>加分</th><th>日期</th></tr></thead><tbody>' +
+          list.slice(0, 30).map(function (r) {
+            return "<tr><td>" + esc(map[r.interaction_type] || r.interaction_type) + "</td><td>" + esc(r.student_name || r.student_id) +
+              "</td><td>" + esc(r.content || "—") + "</td><td>" + esc(r.score ?? "—") + "</td><td>" + esc(r.lesson_date) + "</td></tr>";
+          }).join("") + "</tbody></table></div>";
+      });
+    }
+    $("it-refresh").addEventListener("click", loadInteractions);
+
+    $("pk-go").addEventListener("click", async function () {
+      var cid = $("pk-course").value;
+      if (!cid) { alert("请选择课程"); return; }
+      var btn = this; btn.disabled = true; btn.textContent = "点名中…";
+      try {
+        var d = await api.get("/api/interaction/random-pick/" + cid);
+        $("pk-result").innerHTML = '本次点名 → <b style="font-size:16px;color:var(--blue)">🎓 ' + esc(d.name) + "（" + esc(d.student_no) + "）</b> —— 已推送给全班学生";
+      } catch (e) { alert(e.message || "点名失败"); }
+      btn.disabled = false; btn.textContent = "🎲 随机点名";
+    });
+
+    $("it-save").addEventListener("click", async function () {
+      var cid = $("it-course").value;
+      var body = {
+        course_id: cid, interaction_type: $("it-type").value,
+        student_id: $("it-student").value.trim(), content: $("it-content").value.trim()
+      };
+      if ($("it-type").value === "rating") body.score = parseInt($("it-score").value, 10) || 1;
+      if (!body.student_id) { alert("请输入学生学号"); return; }
+      try { await api.post("/api/interaction/", body); alert("已保存"); loadInteractions(); }
+      catch (e) { alert(e.message || "保存失败"); }
+    });
+  }
+
+  /* ---------- 作业管理 ---------- */
+  function renderHomework(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">发布作业</div>' +
+      '<div class="row"><select id="hw-course" class="input" style="flex:1;min-width:160px"></select>' +
+      '<input id="hw-title" class="input" style="flex:1;min-width:160px" placeholder="作业标题">' +
+      '<select id="hw-lang" class="input" style="width:110px"><option>python</option><option>c</option><option>cpp</option><option>java</option></select>' +
+      '<input id="hw-max" type="number" class="input" value="100" style="width:80px"></div>' +
+      '<textarea id="hw-desc" class="input" rows="3" style="margin-top:8px" placeholder="作业描述"></textarea>' +
+      '<div class="row" style="margin-top:8px"><input id="hw-deadline" type="datetime-local" class="input" style="flex:1">' +
+      '<button class="btn btn-primary" id="hw-create">发布</button></div></div>' +
+      '<div class="card"><div class="card-title">作业列表</div>' +
+      '<div class="row" style="margin-bottom:8px"><select id="hw-fcourse" class="input" style="flex:1;min-width:200px"></select>' +
+      '<button class="btn btn-outline btn-sm" id="hw-refresh">刷新</button></div><div id="hw-list"></div></div>' +
+      '<div class="card"><div class="card-title">操作结果</div><pre class="out" id="hw-result">在作业列表操作，结果在此显示。</pre></div>';
+
+    courseOptions("hw-course");
+    fillCourseFilter("hw-fcourse");
+    loadHomeworks();
+
+    function fillCourseFilter(id) {
+      $(id).innerHTML = '<option value="">全部课程</option>' +
+        Object.keys(courseMap).map(function (c) { return '<option value="' + c + '">' + esc(courseMap[c].course_name) + "</option>"; }).join("");
+      $(id).value = "";
+    }
+    function loadHomeworks() {
+      var cid = $("hw-fcourse").value;
+      api.get("/api/homework/list?course_id=" + (cid || "")).then(function (list) {
+        if (!list || !list.length) { $("hw-list").innerHTML = '<div class="empty">暂无作业</div>'; return; }
+        $("hw-list").innerHTML =
+          '<div class="table-wrap"><table class="tbl"><thead><tr><th>作业</th><th>课程</th><th>语言</th><th>提交数</th><th>操作</th></tr></thead><tbody>' +
+          list.map(function (h) {
+            return '<tr><td><b>' + esc(h.title) + "</b></td><td>" + esc(h.course_id) + "</td><td>" + esc(h.programming_language) +
+              "</td><td>" + esc(h.submit_count ?? "—") + "</td><td><div class='row'>" +
+              '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="grade">AI 批改</button>' +
+              '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="gradebook">成绩册</button>' +
+              '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="subs">提交列表</button>' +
+              "</div></td></tr>";
+          }).join("") + "</tbody></table></div>";
+        $("hw-list").querySelectorAll("button[data-hw]").forEach(function (b) {
+          b.addEventListener("click", function () {
+            var act = b.getAttribute("data-act"), id = b.getAttribute("data-hw");
+            if (act === "grade") {
+              $("hw-result").textContent = "AI 批改中（可能需要 1-2 分钟）…";
+              api.post("/api/ai/homework/" + id + "/grade-all").then(function (d) {
+                $("hw-result").textContent = "批改完成：" + JSON.stringify(d, null, 2);
+              }).catch(function (e) { $("hw-result").textContent = "批改失败：" + (e.message || ""); });
+            } else {
+              api.get("/api/homework/" + id + "/" + (act === "gradebook" ? "gradebook" : "submissions")).then(function (d) {
+                $("hw-result").textContent = JSON.stringify(d, null, 2);
+              }).catch(function (e) { $("hw-result").textContent = "加载失败：" + (e.message || ""); });
+            }
+          });
+        });
+      });
+    }
+    $("hw-refresh").addEventListener("click", loadHomeworks);
+
+    $("hw-create").addEventListener("click", async function () {
+      var cid = $("hw-course").value, title = $("hw-title").value.trim();
+      if (!cid || !title) { alert("请选择课程并填写标题"); return; }
+      var deadline = $("hw-deadline").value;
+      var body = {
+        course_id: cid, title: title, description: $("hw-desc").value,
+        programming_language: $("hw-lang").value, max_score: parseFloat($("hw-max").value) || 100,
+        allow_late_submit: false,
+        test_cases: [
+          { name: "示例1", test_input: "", expected_output: "hello", score_weight: 50, is_public: true },
+          { name: "示例2", test_input: "", expected_output: "world", score_weight: 50, is_public: false }
+        ]
+      };
+      if (deadline) body.deadline = deadline + ":00";
+      var btn = this; btn.disabled = true; btn.textContent = "发布中…";
+      try { await api.post("/api/homework/", body); alert("作业已发布"); loadHomeworks(); }
+      catch (e) { alert(e.message || "发布失败"); }
+      btn.disabled = false; btn.textContent = "发布";
+    });
+  }
+
+  /* ---------- AI 助教 ---------- */
+  function renderAI(el) {
+    el.innerHTML =
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">AI 备课助手</div>' +
+      '<div class="row"><select id="ai-course" class="input" style="flex:1;min-width:200px"></select>' +
+      '<input id="ai-topic" class="input" style="flex:2;min-width:200px" placeholder="备课主题，如：数组与指针">' +
+      '<button class="btn btn-primary" id="ai-go">生成</button></div>' +
+      '<pre class="out" id="ai-out" style="margin-top:10px">输入主题，AI 生成备课内容。</pre></div>' +
+      '<div class="card"><div class="card-title">答疑热词</div>' +
+      '<div class="row" style="margin-bottom:8px"><select id="ai-hot" class="input" style="flex:1;min-width:200px"></select>' +
+      '<button class="btn btn-outline btn-sm" id="ai-hot-go">查看热词</button></div><div id="ai-hotwords"></div></div>';
+
+    courseOptions("ai-course");
+    courseOptions("ai-hot");
+
+    $("ai-go").addEventListener("click", async function () {
+      var cid = $("ai-course").value, topic = $("ai-topic").value.trim();
+      if (!topic) return;
+      var btn = this; btn.disabled = true; btn.textContent = "生成中…";
+      $("ai-out").textContent = "AI 备课生成中…";
+      try {
+        var d = await api.post("/api/ai/teacher/assist", { course_id: cid, topic: topic });
+        $("ai-out").textContent = d.content || "（空）";
+      } catch (e) { $("ai-out").textContent = "生成失败：" + (e.message || ""); }
+      btn.disabled = false; btn.textContent = "生成";
+    });
+
+    $("ai-hot-go").addEventListener("click", async function () {
+      var cid = $("ai-hot").value;
+      try {
+        var d = await api.get("/api/ai/qa/hotwords?course_id=" + cid);
+        $("ai-hotwords").innerHTML = (d && d.length) ? d.map(function (w) {
+          var v = typeof w === "string" ? w : (w.word || w.hotword || "");
+          var n = typeof w === "object" ? (w.count || 1) : 1;
+          return '<span class="badge" style="background:var(--amber-soft);color:#92400e;margin:3px;font-size:' +
+            Math.min(16, 11 + n) + "px\">" + esc(v) + "</span>";
+        }).join("") : '<div class="empty">暂无热词</div>';
+      } catch (e) { $("ai-hotwords").innerHTML = '<div class="bad">' + esc(e.message || "加载失败") + "</div>"; }
+    });
+  }
+})();
+</script>
+</body>
+</html>

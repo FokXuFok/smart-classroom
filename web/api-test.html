@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>API 测试台 · 智慧课堂</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6f8; padding: 24px; }
+  .bar { background: #fff; border-radius: 8px; padding: 14px 20px; margin-bottom: 16px;
+         box-shadow: 0 1px 4px rgba(0,0,0,.06); display: flex; align-items: center; gap: 12px; }
+  .bar h1 { font-size: 17px; }
+  .bar .user { color: #555; font-size: 13px; margin-left: auto; }
+  .bar a.back { color: #2563eb; font-size: 13px; text-decoration: none; }
+  .bar button { padding: 7px 16px; background: #dc2626; color: #fff; border: none;
+                border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .panel { background: #fff; border-radius: 8px; padding: 18px 20px; margin-bottom: 16px;
+           box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .panel h2 { font-size: 15px; margin-bottom: 12px; color: #111; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btns button { padding: 8px 14px; background: #2563eb; color: #fff; border: none;
+                 border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .btns button:hover { background: #1d4ed8; }
+  .row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  .row select, .row input { padding: 8px 10px; border: 1px solid #d9dce1; border-radius: 6px; font-size: 13px; }
+  #path { flex: 1; min-width: 260px; }
+  #body { width: 100%; margin-top: 8px; padding: 8px 10px; border: 1px solid #d9dce1;
+          border-radius: 6px; font-size: 13px; font-family: Consolas, monospace; }
+  .row button { padding: 8px 18px; background: #16a34a; color: #fff; border: none;
+                border-radius: 6px; cursor: pointer; font-size: 13px; }
+  pre { background: #0f172a; color: #a5f3fc; border-radius: 6px; padding: 14px;
+        font-size: 12px; font-family: Consolas, monospace; overflow: auto;
+        max-height: 420px; white-space: pre-wrap; word-break: break-all; }
+  .status { font-size: 12px; margin-bottom: 8px; }
+  .ok { color: #16a34a; } .bad { color: #dc2626; }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>API 测试台</h1>
+  <a class="back" id="back" href="index.html">← 返回登录页</a>
+  <span class="user" id="user">加载中…</span>
+  <button id="logout">退出登录</button>
+</div>
+
+<div class="panel">
+  <h2>预置接口（按当前登录角色）</h2>
+  <div class="btns" id="preset"></div>
+</div>
+
+<div class="panel">
+  <h2>自定义请求</h2>
+  <div class="row">
+    <select id="method"><option>GET</option><option>POST</option></select>
+    <input id="path" placeholder="/api/..." value="/api/auth/me">
+    <button id="send">发送</button>
+  </div>
+  <textarea id="body" rows="4" placeholder='POST 请求的 JSON body，如 {"key": "value"}'></textarea>
+</div>
+
+<div class="panel">
+  <h2>响应结果</h2>
+  <div class="status" id="status"></div>
+  <pre id="out">（尚未请求）</pre>
+</div>
+
+<script src="js/api.js"></script>
+<script>
+(function () {
+  "use strict";
+  // 各角色可测的只读接口
+  var TESTS = {
+    common: [["当前用户", "/api/auth/me"], ["我的通知", "/api/notification/list?limit=20"]],
+    student: [
+      ["我的课程", "/api/student/courses"],
+      ["进行中签到", "/api/student/checkin/active"],
+      ["签到历史", "/api/student/checkin/history"],
+      ["考勤统计", "/api/student/attendance/stats"],
+      ["作业列表", "/api/student/homework/list"]
+    ],
+    teacher: [
+      ["我的课程", "/api/teacher/courses"],
+      ["签到会话", "/api/teacher/checkin/sessions"],
+      ["作业列表", "/api/homework/list"]
+    ],
+    counselor: [
+      ["班级概览", "/api/counselor/classes"],
+      ["学生列表", "/api/counselor/students"],
+      ["预警总览", "/api/counselor/warnings"],
+      ["统计", "/api/counselor/stat"]
+    ],
+    admin: [
+      ["系统总览", "/api/admin/stat/overview"],
+      ["学生列表", "/api/admin/users?role=student"],
+      ["教师列表", "/api/admin/users?role=teacher"],
+      ["课程管理", "/api/admin/courses"],
+      ["班级管理", "/api/admin/classes"],
+      ["选课记录", "/api/admin/enrollments"],
+      ["审计日志", "/api/admin/audit"]
+    ]
+  };
+  var ROLE_CN = { student: "学生", teacher: "教师", counselor: "辅导员", admin: "管理员" };
+  var out = document.getElementById("out");
+  var statusEl = document.getElementById("status");
+
+  function show(ok, data) {
+    statusEl.textContent = ok ? "✔ 成功" : "✘ 失败";
+    statusEl.className = "status " + (ok ? "ok" : "bad");
+    out.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  }
+
+  // 登录验证 + 渲染预置按钮
+  api.get("/api/auth/me", { silent: true }).then(function (u) {
+    document.getElementById("user").textContent =
+      (ROLE_CN[u.role] || u.role) + " · " + u.name + "（" + u.user_id + "）";
+    document.getElementById("back").href = u.role + ".html";
+
+    var preset = document.getElementById("preset");
+    var list = (TESTS.common || []).concat(TESTS[u.role] || []);
+    list.forEach(function (t) {
+      var b = document.createElement("button");
+      b.textContent = t[0];
+      b.addEventListener("click", function () {
+        document.getElementById("path").value = t[1];
+        document.getElementById("method").value = "GET";
+        api.get(t[1]).then(function (d) { show(true, d); }).catch(function (e) { show(false, e); });
+      });
+      preset.appendChild(b);
+    });
+  }).catch(function () {
+    location.href = "index.html";
+  });
+
+  // 自定义发送
+  document.getElementById("send").addEventListener("click", function () {
+    var method = document.getElementById("method").value;
+    var path = document.getElementById("path").value.trim();
+    if (!path) return;
+    if (method === "GET") {
+      api.get(path).then(function (d) { show(true, d); }).catch(function (e) { show(false, e); });
+    } else {
+      var body = {};
+      var raw = document.getElementById("body").value.trim();
+      if (raw) { try { body = JSON.parse(raw); } catch (e) { return show(false, "body 不是合法 JSON"); } }
+      api.post(path, body).then(function (d) { show(true, d); }).catch(function (e) { show(false, e); });
+    }
+  });
+
+  // 退出登录
+  document.getElementById("logout").addEventListener("click", async function () {
+    try { await api.post("/api/auth/logout", {}, { silent: true }); } catch (e) { /* 忽略 */ }
+    location.href = "index.html";
+  });
+})();
+</script>
+</body>
+</html>
