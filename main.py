@@ -81,7 +81,7 @@ def check_database() -> None:
             conn.execute(text("SELECT 1"))
     except Exception as exc:
         print(f"[FAIL]  数据库连接失败：{type(exc).__name__}: {exc}")
-        print("        请确认 MySQL 已启动且账号配置正确（config.py DB_URL：")
+        print("        请确认 MySQL 已启动且账号配置正确（.env 中 DB_URL：")
         print(f"        {config.DB_URL}）")
         sys.exit(1)
     print("[OK]    数据库连接正常")
