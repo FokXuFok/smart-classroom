@@ -13,10 +13,10 @@ from sqlalchemy import func
 
 from app.core import face_engine
 from app.core.geofence import DEFAULT_COORD, haversine_m
-from app.core.security import create_token
 from app.database import SessionLocal
 from app.main import app
 from app.models import AttendanceRecord, CheckinSession, Student
+from tests.conftest import forge_cookies, login_cookies
 
 client = TestClient(app)
 
@@ -49,28 +49,14 @@ def use_fake_engine(monkeypatch, sim=0.9):
     monkeypatch.setattr(face_engine, "get_engine", lambda: FakeEngine(sim))
 
 
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.fixture(scope="module")
 def teacher_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": "T001", "password": "123456", "role": "teacher"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies("T001", "123456", "teacher")
 
 
 @pytest.fixture(scope="module")
 def student_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": STUDENT, "password": "123456", "role": "student"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies(STUDENT, "123456", "student")
 
 
 @pytest.fixture(autouse=True)
@@ -130,7 +116,7 @@ def start_session(teacher_token, course_id="CS101", **extra):
     payload = {"course_id": course_id}
     payload.update(extra)
     resp = client.post(
-        "/api/teacher/checkin/start", json=payload, headers=auth(teacher_token)
+        "/api/teacher/checkin/start", json=payload, cookies=teacher_token
     )
     assert resp.json()["code"] == 0
     return resp.json()["data"]
@@ -139,7 +125,7 @@ def start_session(teacher_token, course_id="CS101", **extra):
 def submit(token, session_id, coords=NEAR_COORD, **extra):
     payload = {"session_id": session_id, "image_b64": IMG, **coords, **extra}
     return client.post(
-        "/api/student/checkin/submit", json=payload, headers=auth(token)
+        "/api/student/checkin/submit", json=payload, cookies=token
     )
 
 
@@ -158,11 +144,11 @@ def test_t1_start_checkin_used_default(teacher_token):
 # ---------- t2 非本人课程发起 → 403 ----------
 
 def test_t2_start_other_teacher_course():
-    token = create_token("T002", "teacher", "测试教师")
+    cookies = forge_cookies("T002", "teacher", "测试教师")
     resp = client.post(
         "/api/teacher/checkin/start",
         json={"course_id": "CS101"},  # 属 T001
-        headers=auth(token),
+        cookies=cookies,
     )
     assert resp.json()["code"] == 403
 
@@ -254,7 +240,7 @@ def test_t8_dashboard_and_end(teacher_token, student_token, temp_template, monke
     assert submit(student_token, sid).json()["code"] == 0
 
     resp = client.get(
-        f"/api/teacher/checkin/dashboard/{sid}", headers=auth(teacher_token)
+        f"/api/teacher/checkin/dashboard/{sid}", cookies=teacher_token
     )
     assert resp.json()["code"] == 0
     students = resp.json()["data"]["students"]
@@ -263,7 +249,7 @@ def test_t8_dashboard_and_end(teacher_token, student_token, temp_template, monke
     other = next(s for s in students if s["student_no"] == "2024002")
     assert other["status"] == "未签到"
 
-    resp = client.post(f"/api/teacher/checkin/{sid}/end", headers=auth(teacher_token))
+    resp = client.post(f"/api/teacher/checkin/{sid}/end", cookies=teacher_token)
     data = resp.json()["data"]
     assert data["absent_created"] >= 1
 
@@ -279,7 +265,7 @@ def test_t8_dashboard_and_end(teacher_token, student_token, temp_template, monke
 
 def test_t9_review_approve(teacher_token):
     sid = start_session(teacher_token)["id"]
-    client.post(f"/api/teacher/checkin/{sid}/end", headers=auth(teacher_token))
+    client.post(f"/api/teacher/checkin/{sid}/end", cookies=teacher_token)
 
     db = SessionLocal()
     rec = (
@@ -293,7 +279,7 @@ def test_t9_review_approve(teacher_token):
     resp = client.post(
         f"/api/teacher/checkin/attendance/{rec.id}/review",
         json={"action": "approve", "remark": "情况属实，同意补签"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
 
@@ -310,12 +296,12 @@ def test_t9_review_approve(teacher_token):
 
 def test_t10_face_register(monkeypatch, reset_2024002_face):
     use_fake_engine(monkeypatch, sim=0.9)
-    tok = create_token("2024002", "student", "李四")
+    cookies = forge_cookies("2024002", "student", "李四")
 
     resp = client.post(
         "/api/student/face/register",
         json={"image_b64": IMG},
-        headers=auth(tok),
+        cookies=cookies,
     )
     assert resp.json()["code"] == 0
     db = SessionLocal()
@@ -328,7 +314,7 @@ def test_t10_face_register(monkeypatch, reset_2024002_face):
     resp2 = client.post(
         "/api/student/face/register",
         json={"image_b64": IMG},
-        headers=auth(tok),
+        cookies=cookies,
     )
     assert resp2.json()["code"] == 403
 
@@ -339,6 +325,6 @@ def test_t10b_face_register_unauthorized_existing(monkeypatch, temp_template, st
     resp = client.post(
         "/api/student/face/register",
         json={"image_b64": IMG},
-        headers=auth(student_token),
+        cookies=student_token,
     )
     assert resp.json()["code"] == 403

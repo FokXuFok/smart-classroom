@@ -15,10 +15,10 @@ from sqlalchemy import func
 
 from app.core import ai_client
 from app.core.ai_client import AiUnavailable
-from app.core.security import create_token
 from app.database import SessionLocal
 from app.main import app
 from app.models import AiKnowledgeBase, AiQaRecord, AiScoringRule
+from tests.conftest import forge_cookies, login_cookies
 
 client = TestClient(app)
 
@@ -30,28 +30,14 @@ STATE = {}  # 跨用例共享：qa record_id / hotword ids / kb_id
 BASE_MAXES = {}
 
 
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.fixture(scope="module")
 def teacher_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": "T001", "password": "123456", "role": "teacher"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies("T001", "123456", "teacher")
 
 
 @pytest.fixture(scope="module")
 def student_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": STUDENT, "password": "123456", "role": "student"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies(STUDENT, "123456", "student")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -167,7 +153,7 @@ def test_t3_qa_real(student_token):
             "question": "什么是变量",
             "is_anonymous": True,
         },
-        headers=auth(student_token),
+        cookies=student_token,
     )
     body = resp.json()
     if body["code"] == 6001:
@@ -216,7 +202,7 @@ def test_t4_hotwords(teacher_token):
     resp = client.get(
         "/api/ai/qa/hotwords",
         params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -238,7 +224,7 @@ def test_t5_knowledge_crud(teacher_token):
             "title": "pytest-变量知识点",
             "content": "变量是内存中一块命名的存储空间",
         },
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -249,7 +235,7 @@ def test_t5_knowledge_crud(teacher_token):
     resp = client.get(
         "/api/ai/knowledge",
         params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     items = resp.json()["data"]
     kb = next(k for k in items if k["id"] == kb_id)
@@ -260,13 +246,13 @@ def test_t5_knowledge_crud(teacher_token):
     resp = client.put(
         "/api/ai/knowledge",
         json={"id": kb_id, "title": "pytest-变量知识点v2", "content": "更新后的内容"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
     resp = client.get(
         "/api/ai/knowledge",
         params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     kb = next(k for k in resp.json()["data"] if k["id"] == kb_id)
     assert kb["title"] == "pytest-变量知识点v2"
@@ -274,13 +260,13 @@ def test_t5_knowledge_crud(teacher_token):
 
     # DELETE
     resp = client.delete(
-        "/api/ai/knowledge", params={"id": kb_id}, headers=auth(teacher_token)
+        "/api/ai/knowledge", params={"id": kb_id}, cookies=teacher_token
     )
     assert resp.json()["code"] == 0
     resp = client.get(
         "/api/ai/knowledge",
         params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert all(k["id"] != kb_id for k in resp.json()["data"])
     STATE.pop("kb_id", None)  # 已自删，teardown 无需再清
@@ -292,7 +278,7 @@ def test_t6_qa_history_anonymous_masked(student_token):
     resp = client.get(
         "/api/ai/qa/history",
         params={"course_id": "CS101", "limit": 20},
-        headers=auth(student_token),
+        cookies=student_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -311,7 +297,7 @@ def test_t6_qa_history_anonymous_masked(student_token):
 @pytest.fixture()
 def t002_token():
     # T002 不授课 CS101（属 T001）
-    return create_token("T002", "teacher", "李沛")
+    return forge_cookies("T002", "teacher", "李沛")
 
 
 @pytest.fixture()
@@ -324,7 +310,7 @@ def cs101_rule_id(teacher_token):
             "name": "pytest-CS101评分规则",
             "content": "正确实现函数逻辑得满分",
         },
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -344,7 +330,7 @@ def test_t7a_hotwords_denied_for_student(student_token):
     resp = client.get(
         "/api/ai/qa/hotwords",
         params={"course_id": "CS101"},
-        headers=auth(student_token),
+        cookies=student_token,
     )
     assert resp.json()["code"] == 403
 
@@ -353,14 +339,14 @@ def test_t7b_hotwords_denied_for_other_teacher(teacher_token, t002_token):
     resp = client.get(
         "/api/ai/qa/hotwords",
         params={"course_id": "CS101"},  # 属 T001
-        headers=auth(t002_token),
+        cookies=t002_token,
     )
     assert resp.json()["code"] == 403
     # 属主 T001 正常访问
     resp = client.get(
         "/api/ai/qa/hotwords",
         params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
 
@@ -370,12 +356,12 @@ def test_t7c_rules_denied_for_other_teacher(t002_token, cs101_rule_id):
     resp = client.put(
         "/api/ai/rules",
         json={"id": cs101_rule_id, "name": "越权篡改"},
-        headers=auth(t002_token),
+        cookies=t002_token,
     )
     assert resp.json()["code"] == 403
     # T002 删除同一条规则 → 403
     resp = client.delete(
         f"/api/ai/rules/{cs101_rule_id}",
-        headers=auth(t002_token),
+        cookies=t002_token,
     )
     assert resp.json()["code"] == 403

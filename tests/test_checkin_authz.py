@@ -3,30 +3,21 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.security import create_token
 from app.main import app
+from tests.conftest import forge_cookies, login_cookies
 
 client = TestClient(app)
 
 
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.fixture(scope="module")
 def t001_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": "T001", "password": "123456", "role": "teacher"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies("T001", "123456", "teacher")
 
 
 @pytest.fixture()
 def t002_token():
     # T002 不授课 CS101（属 T001）
-    return create_token("T002", "teacher", "李沛")
+    return forge_cookies("T002", "teacher", "李沛")
 
 
 def test_dashboard_denied_for_other_teacher(t001_token, t002_token):
@@ -34,21 +25,21 @@ def test_dashboard_denied_for_other_teacher(t001_token, t002_token):
     resp = client.post(
         "/api/teacher/checkin/start",
         json={"course_id": "CS101"},
-        headers=auth(t001_token),
+        cookies=t001_token,
     )
     assert resp.json()["code"] == 0
     sid = resp.json()["data"]["id"]
 
     # T002 查看该会话看板 → 403
-    resp = client.get(f"/api/teacher/checkin/dashboard/{sid}", headers=auth(t002_token))
+    resp = client.get(f"/api/teacher/checkin/dashboard/{sid}", cookies=t002_token)
     assert resp.json()["code"] == 403
 
     # T001 本人可查看 → 0
-    resp = client.get(f"/api/teacher/checkin/dashboard/{sid}", headers=auth(t001_token))
+    resp = client.get(f"/api/teacher/checkin/dashboard/{sid}", cookies=t001_token)
     assert resp.json()["code"] == 0
 
     # 清理：结束会话并删除（避免污染库）
-    client.post(f"/api/teacher/checkin/{sid}/end", headers=auth(t001_token))
+    client.post(f"/api/teacher/checkin/{sid}/end", cookies=t001_token)
 
 
 def test_review_denied_for_other_teacher(t001_token, t002_token):
@@ -56,10 +47,10 @@ def test_review_denied_for_other_teacher(t001_token, t002_token):
     resp = client.post(
         "/api/teacher/checkin/start",
         json={"course_id": "CS101", "duration_minutes": 1},
-        headers=auth(t001_token),
+        cookies=t001_token,
     )
     sid = resp.json()["data"]["id"]
-    resp = client.post(f"/api/teacher/checkin/{sid}/end", headers=auth(t001_token))
+    resp = client.post(f"/api/teacher/checkin/{sid}/end", cookies=t001_token)
     assert resp.json()["code"] == 0
     # 从库里取 2024001 在该会话的缺勤记录
     from app.database import SessionLocal
@@ -83,7 +74,7 @@ def test_review_denied_for_other_teacher(t001_token, t002_token):
     resp = client.post(
         f"/api/teacher/checkin/attendance/{record_id}/review",
         json={"action": "approve"},
-        headers=auth(t002_token),
+        cookies=t002_token,
     )
     assert resp.json()["code"] == 403
 
@@ -105,14 +96,14 @@ def test_checkin_sessions_history(t001_token):
     resp = client.post(
         "/api/teacher/checkin/start",
         json={"course_id": "CS101", "duration_minutes": 1},
-        headers=auth(t001_token),
+        cookies=t001_token,
     )
     assert resp.json()["code"] == 0
     sid = resp.json()["data"]["id"]
 
     try:
         # 列表应含该会话，且为进行中
-        resp = client.get("/api/teacher/checkin/sessions", headers=auth(t001_token))
+        resp = client.get("/api/teacher/checkin/sessions", cookies=t001_token)
         assert resp.json()["code"] == 0
         rows = resp.json()["data"]
         row = next((r for r in rows if r["id"] == sid), None)
@@ -126,24 +117,20 @@ def test_checkin_sessions_history(t001_token):
         resp = client.get(
             "/api/teacher/checkin/sessions",
             params={"course_id": "CS102"},
-            headers=auth(t001_token),
+            cookies=t001_token,
         )
         assert resp.json()["code"] == 0
         assert all(r["id"] != sid for r in resp.json()["data"])
 
-        # 越权：学生 token 访问 → 403
-        resp = client.post(
-            "/api/auth/login",
-            json={"username": "2024001", "password": "123456", "role": "student"},
-        )
-        st_token = resp.json()["data"]["token"]
-        resp = client.get("/api/teacher/checkin/sessions", headers=auth(st_token))
+        # 越权：学生 cookie 访问 → 403
+        st_cookies = login_cookies("2024001", "123456", "student")
+        resp = client.get("/api/teacher/checkin/sessions", cookies=st_cookies)
         assert resp.json()["code"] == 403
 
         # 结束后列表 status=0
-        resp = client.post(f"/api/teacher/checkin/{sid}/end", headers=auth(t001_token))
+        resp = client.post(f"/api/teacher/checkin/{sid}/end", cookies=t001_token)
         assert resp.json()["code"] == 0
-        resp = client.get("/api/teacher/checkin/sessions", headers=auth(t001_token))
+        resp = client.get("/api/teacher/checkin/sessions", cookies=t001_token)
         row = next(
             (r for r in resp.json()["data"] if r["id"] == sid), None
         )

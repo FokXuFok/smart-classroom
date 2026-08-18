@@ -22,6 +22,7 @@ from app.models import (
     SubmissionRecord,
 )
 from app.models.homework import TestCase as CaseModel  # 别名避免 pytest 误收集
+from tests.conftest import login_cookies
 
 client = TestClient(app)
 
@@ -35,38 +36,19 @@ HALF_CODE = "a, b = map(int, input().split())\nprint(a * b + 1)"
 STATE = {}  # 跨用例共享：hw_id / submission ids
 
 
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.fixture(scope="module")
 def teacher_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": "T001", "password": "123456", "role": "teacher"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies("T001", "123456", "teacher")
 
 
 @pytest.fixture(scope="module")
 def student_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": STUDENT, "password": "123456", "role": "student"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies(STUDENT, "123456", "student")
 
 
 @pytest.fixture(scope="module")
 def student2_token():
-    resp = client.post(
-        "/api/auth/login",
-        json={"username": STUDENT2, "password": "123456", "role": "student"},
-    )
-    assert resp.json()["code"] == 0
-    return resp.json()["data"]["token"]
+    return login_cookies(STUDENT2, "123456", "student")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -167,7 +149,7 @@ def create_homework(teacher_token, **extra):
         ],
     }
     payload.update(extra)
-    resp = client.post("/api/homework/", json=payload, headers=auth(teacher_token))
+    resp = client.post("/api/homework/", json=payload, cookies=teacher_token)
     body = resp.json()
     assert body["code"] == 0, body
     return body["data"]["homework_id"]
@@ -177,7 +159,7 @@ def submit_code(token, hw_id, code):
     resp = client.post(
         f"/api/student/homework/{hw_id}/submit",
         json={"code": code, "language": "python"},
-        headers=auth(token),
+        cookies=token,
     )
     return resp.json()
 
@@ -187,7 +169,7 @@ def wait_judged(token, hw_id, submission_id, timeout=15):
     end = time.time() + timeout
     while time.time() < end:
         resp = client.get(
-            f"/api/student/homework/{hw_id}/my", headers=auth(token)
+            f"/api/student/homework/{hw_id}/my", cookies=token
         )
         body = resp.json()
         if body["code"] == 0:
@@ -204,7 +186,7 @@ def test_t1_create_homework(teacher_token):
     hw_id = create_homework(teacher_token)
     STATE["hw_id"] = hw_id
 
-    resp = client.get(f"/api/homework/{hw_id}", headers=auth(teacher_token))
+    resp = client.get(f"/api/homework/{hw_id}", cookies=teacher_token)
     data = resp.json()["data"]
     assert data["title"] == "pytest-两数之和"
     assert len(data["test_cases"]) == 2
@@ -214,7 +196,7 @@ def test_t1_create_homework(teacher_token):
     # 教师列表可见
     resp = client.get(
         "/api/homework/list", params={"course_id": "CS101"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     items = resp.json()["data"]
     mine = next(h for h in items if h["id"] == hw_id)
@@ -225,7 +207,7 @@ def test_t1_create_homework(teacher_token):
 
 def test_t2_student_detail_case_visibility(teacher_token, student_token):
     resp = client.get(
-        f"/api/student/homework/{STATE['hw_id']}", headers=auth(student_token)
+        f"/api/student/homework/{STATE['hw_id']}", cookies=student_token
     )
     assert resp.json()["code"] == 0
     cases = resp.json()["data"]["test_cases"]
@@ -240,7 +222,7 @@ def test_t2_student_detail_case_visibility(teacher_token, student_token):
 
     # 学生作业列表包含该作业
     resp = client.get(
-        "/api/student/homework/list", headers=auth(student_token)
+        "/api/student/homework/list", cookies=student_token
     )
     items = resp.json()["data"]
     assert any(h["id"] == STATE["hw_id"] for h in items)
@@ -281,7 +263,7 @@ def test_t4_submit_half_correct(teacher_token, student_token):
 
 def test_t4b_hidden_case_result_no_leak(teacher_token, student_token):
     resp = client.get(
-        f"/api/student/homework/{STATE['hw_id']}/my", headers=auth(student_token)
+        f"/api/student/homework/{STATE['hw_id']}/my", cookies=student_token
     )
     assert resp.json()["code"] == 0
     subs = resp.json()["data"]
@@ -305,7 +287,7 @@ def test_t4b_hidden_case_result_no_leak(teacher_token, student_token):
 
 def test_t5_teacher_submissions_and_gradebook(teacher_token):
     resp = client.get(
-        f"/api/homework/{STATE['hw_id']}/submissions", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}/submissions", cookies=teacher_token
     )
     assert resp.json()["code"] == 0
     subs = resp.json()["data"]
@@ -315,7 +297,7 @@ def test_t5_teacher_submissions_and_gradebook(teacher_token):
     assert scores == {100.0, 40.0}
 
     resp = client.get(
-        f"/api/homework/{STATE['hw_id']}/gradebook", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}/gradebook", cookies=teacher_token
     )
     rows = resp.json()["data"]
     row = next(r for r in rows if r["student_id"] == STUDENT)
@@ -329,7 +311,7 @@ def test_t5_teacher_submissions_and_gradebook(teacher_token):
 def test_t6_ai_feedback_rule_fallback(teacher_token, student_token):
     # 教师视角：judge 后 ai_feedback 非空（AiUnavailable → rule_feedback 降级）
     resp = client.get(
-        f"/api/homework/{STATE['hw_id']}/submissions", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}/submissions", cookies=teacher_token
     )
     subs = resp.json()["data"]
     fb = next(s["ai_feedback"] for s in subs if s["id"] == STATE["correct_sub"])
@@ -337,7 +319,7 @@ def test_t6_ai_feedback_rule_fallback(teacher_token, student_token):
 
     # 学生视角：feedback_visible=0 且未过 deadline → ai_feedback 隐藏
     resp = client.get(
-        f"/api/student/homework/{STATE['hw_id']}/my", headers=auth(student_token)
+        f"/api/student/homework/{STATE['hw_id']}/my", cookies=student_token
     )
     mine = resp.json()["data"]
     correct = next(s for s in mine if s["id"] == STATE["correct_sub"])
@@ -347,11 +329,11 @@ def test_t6_ai_feedback_rule_fallback(teacher_token, student_token):
     # 教师提前开放 → 学生可见
     resp = client.post(
         f"/api/homework/{STATE['hw_id']}/open-feedback",
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
     resp = client.get(
-        f"/api/student/homework/{STATE['hw_id']}/my", headers=auth(student_token)
+        f"/api/student/homework/{STATE['hw_id']}/my", cookies=student_token
     )
     correct = next(
         s for s in resp.json()["data"] if s["id"] == STATE["correct_sub"]
@@ -384,7 +366,7 @@ def test_t7_similarity(teacher_token, student2_token):
 
     resp = client.post(
         f"/api/homework/{STATE['hw_id']}/similarity",
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
     pairs = resp.json()["data"]
@@ -429,13 +411,13 @@ def test_t8_deadline_reject(teacher_token, student_token):
 def test_t9_delete_rules(teacher_token, student_token):
     # 有提交记录 → 400
     resp = client.delete(
-        f"/api/homework/{STATE['hw_id']}", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}", cookies=teacher_token
     )
     assert resp.json()["code"] == 400
 
     # 无提交 → 可删（用截止作业，其无提交记录）
     resp = client.delete(
-        f"/api/homework/{STATE['closed_hw_id']}", headers=auth(teacher_token)
+        f"/api/homework/{STATE['closed_hw_id']}", cookies=teacher_token
     )
     assert resp.json()["code"] == 0
 
@@ -464,18 +446,18 @@ def test_t10_update_and_rejudge(teacher_token):
                 },
             ],
         },
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0
     resp = client.get(
-        f"/api/homework/{STATE['hw_id']}", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}", cookies=teacher_token
     )
     cases = resp.json()["data"]["test_cases"]
     assert [c["name"] for c in cases] == ["公开-小数v2", "隐藏-大数v2"]
 
     # 重评：3 条提交全部重新评测（TestClient 同步执行后台任务）
     resp = client.post(
-        f"/api/homework/{STATE['hw_id']}/rejudge", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}/rejudge", cookies=teacher_token
     )
     body = resp.json()
     assert body["code"] == 0
@@ -483,7 +465,7 @@ def test_t10_update_and_rejudge(teacher_token):
 
     # 重评不虚增提交次数：STUDENT 仍为 2 次，成绩取历史最高分
     resp = client.get(
-        f"/api/homework/{STATE['hw_id']}/gradebook", headers=auth(teacher_token)
+        f"/api/homework/{STATE['hw_id']}/gradebook", cookies=teacher_token
     )
     rows = resp.json()["data"]
     row = next(r for r in rows if r["student_id"] == STUDENT)

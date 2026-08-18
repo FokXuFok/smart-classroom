@@ -79,25 +79,31 @@ def test_token_roundtrip():
 # ---------- 登录 / /me ----------
 
 def test_login_success():
-    resp = client.post(
+    # 登录走一次性 client，避免污染本模块共享 client 的 cookie jar
+    c = TestClient(app)
+    resp = c.post(
         "/api/auth/login",
         json={"username": USERNAME, "password": "123456", "role": "student"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
-    token = body["data"]["token"]
+    # token 现经 httpOnly cookie 下发，响应体不再含 token 字段
+    cookie = resp.cookies.get("sc_token_student")
+    assert cookie, "登录响应未下发 sc_token_student cookie"
     assert body["data"]["role"] == "student"
     assert body["data"]["user_id"] == USERNAME
 
-    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+    me = client.get("/api/auth/me", cookies={"sc_token_student": cookie})
     me_body = me.json()
     assert me_body["code"] == 0
     assert me_body["data"]["name"] == "张三"
-    assert me_body["data"]["class_id"] == "CLS001"
+    assert me_body["data"]["role"] == "student"
+    assert me_body["data"]["user_id"] == USERNAME
 
 
 def test_me_without_token():
+    client.cookies.clear()  # 确保无残留登录 cookie
     resp = client.get("/api/auth/me")
     body = resp.json()
     assert body["code"] == 401

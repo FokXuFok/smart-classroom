@@ -26,23 +26,13 @@ from app.models import (
     Notification,
     Student,
 )
+from tests.conftest import login_cookies
 
 client = TestClient(app)
 
 STUDENT = "2024001"
 # CS101 实际选课学生（以库为准：2024001/2024002/2451200817）
 ENROLLED_CS101 = {"2024001", "2024002", "2024003", "2024004", "2451200817"}
-
-
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
-def login(username, password, role):
-    return client.post(
-        "/api/auth/login",
-        json={"username": username, "password": password, "role": role},
-    ).json()
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -98,36 +88,28 @@ def db_sandbox():
 
 @pytest.fixture(scope="module")
 def admin_token():
-    body = login("admin", "admin123", "admin")
-    assert body["code"] == 0, body
-    return body["data"]["token"]
+    return login_cookies("admin", "admin123", "admin")
 
 
 @pytest.fixture(scope="module")
 def teacher_token():
-    body = login("T001", "123456", "teacher")
-    assert body["code"] == 0, body
-    return body["data"]["token"]
+    return login_cookies("T001", "123456", "teacher")
 
 
 @pytest.fixture(scope="module")
 def counselor_token():
-    body = login("C001", "123456", "counselor")
-    assert body["code"] == 0, body
-    return body["data"]["token"]
+    return login_cookies("C001", "123456", "counselor")
 
 
 @pytest.fixture(scope="module")
 def student_token():
-    body = login(STUDENT, "123456", "student")
-    assert body["code"] == 0, body
-    return body["data"]["token"]
+    return login_cookies(STUDENT, "123456", "student")
 
 
 # ---------- 管理端：数据驾驶舱 ----------
 
 def test_admin_overview(admin_token):
-    resp = client.get("/api/admin/stat/overview", headers=auth(admin_token))
+    resp = client.get("/api/admin/stat/overview", cookies=admin_token)
     body = resp.json()
     assert body["code"] == 0, body
     data = body["data"]
@@ -152,7 +134,7 @@ def test_admin_user_crud_loop(admin_token):
             "department": "pytest系",
             "phone": "13800000099",
         },
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0, resp.json()
 
@@ -160,7 +142,7 @@ def test_admin_user_crud_loop(admin_token):
     resp = client.post(
         "/api/admin/users",
         json={"role": "teacher", "user_no": "T999", "name": "重复"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 400
 
@@ -168,7 +150,7 @@ def test_admin_user_crud_loop(admin_token):
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher", "keyword": "T999"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     body = resp.json()
     assert body["code"] == 0
@@ -183,48 +165,54 @@ def test_admin_user_crud_loop(admin_token):
     resp = client.put(
         "/api/admin/users/teacher/T999",
         json={"name": "改名的教师", "title": "讲师"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher", "keyword": "T999"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["data"]["items"][0]["name"] == "改名的教师"
 
     # 重置密码 → 默认 123456 可登录
     resp = client.post(
-        "/api/admin/users/teacher/T999/reset-password", headers=auth(admin_token)
+        "/api/admin/users/teacher/T999/reset-password", cookies=admin_token
     )
     assert resp.json()["code"] == 0
-    body = login("T999", "123456", "teacher")
+    body = TestClient(app).post(
+        "/api/auth/login",
+        json={"username": "T999", "password": "123456", "role": "teacher"},
+    ).json()
     assert body["code"] == 0, body
 
     # 禁用 → 登录被拒（1003 账号被禁用）
     resp = client.post(
-        "/api/admin/users/teacher/T999/toggle-status", headers=auth(admin_token)
+        "/api/admin/users/teacher/T999/toggle-status", cookies=admin_token
     )
     assert resp.json()["code"] == 0
     assert resp.json()["data"]["status"] == 0
-    body = login("T999", "123456", "teacher")
+    body = TestClient(app).post(
+        "/api/auth/login",
+        json={"username": "T999", "password": "123456", "role": "teacher"},
+    ).json()
     assert body["code"] in (403, 1003)
 
     # 删除 → 列表不再可见
     resp = client.delete(
-        "/api/admin/users/teacher/T999", headers=auth(admin_token)
+        "/api/admin/users/teacher/T999", cookies=admin_token
     )
     assert resp.json()["code"] == 0
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher", "keyword": "T999"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["data"]["total"] == 0
 
     # 管理员不能删除自己
     resp = client.delete(
-        "/api/admin/users/admin/admin", headers=auth(admin_token)
+        "/api/admin/users/admin/admin", cookies=admin_token
     )
     assert resp.json()["code"] == 400
 
@@ -233,7 +221,7 @@ def test_admin_audit_has_records(admin_token):
     resp = client.get(
         "/api/admin/audit",
         params={"action": "user_create", "page": 1, "page_size": 10},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     body = resp.json()
     assert body["code"] == 0
@@ -257,46 +245,46 @@ def test_admin_delete_user_precheck(admin_token):
     resp = client.post(
         "/api/admin/users",
         json={"role": "teacher", "user_no": "T998", "name": "预检测试教师"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0, resp.json()
     resp = client.post(
         "/api/admin/courses",
         json={"course_id": "CS998", "course_name": "预检测试课程",
               "teacher_id": "T998"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0, resp.json()
     resp = client.post(
         "/api/admin/users",
         json={"role": "student", "user_no": "S2024998", "name": "预检测试生",
               "class_id": "CLS001"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0, resp.json()
     resp = client.post(
         "/api/admin/enrollments",
         json={"course_id": "CS998", "student_no": "S2024998"},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0, resp.json()
 
     try:
         # 教师名下有课程 → 400，且课程/选课完好
         resp = client.delete(
-            "/api/admin/users/teacher/T998", headers=auth(admin_token)
+            "/api/admin/users/teacher/T998", cookies=admin_token
         )
         body = resp.json()
         assert body["code"] == 400, "有课程的教师不可删除"
         assert "课程" in body["message"]
         courses = client.get(
-            "/api/admin/courses", headers=auth(admin_token)
+            "/api/admin/courses", cookies=admin_token
         ).json()["data"]
         assert any(c["course_id"] == "CS998" for c in courses)
 
         # 学生有选课 → 400
         resp = client.delete(
-            "/api/admin/users/student/S2024998", headers=auth(admin_token)
+            "/api/admin/users/student/S2024998", cookies=admin_token
         )
         body = resp.json()
         assert body["code"] == 400, "有选课的学生不可删除"
@@ -311,27 +299,27 @@ def test_admin_delete_user_precheck(admin_token):
             db.commit()
         finally:
             db.close()
-        client.delete("/api/admin/courses/CS998", headers=auth(admin_token))
-        client.delete("/api/admin/users/teacher/T998", headers=auth(admin_token))
+        client.delete("/api/admin/courses/CS998", cookies=admin_token)
+        client.delete("/api/admin/users/teacher/T998", cookies=admin_token)
         client.delete(
-            "/api/admin/users/student/S2024998", headers=auth(admin_token)
+            "/api/admin/users/student/S2024998", cookies=admin_token
         )
 
     # -- 种子数据抽查：真实关联数据同样拒绝 --
-    resp = client.delete("/api/admin/users/teacher/T001", headers=auth(admin_token))
+    resp = client.delete("/api/admin/users/teacher/T001", cookies=admin_token)
     body = resp.json()
     assert body["code"] == 400, "T001 名下有课程，不可删除"
     assert "课程" in body["message"]
 
     resp = client.delete(
-        "/api/admin/users/student/2024001", headers=auth(admin_token)
+        "/api/admin/users/student/2024001", cookies=admin_token
     )
     body = resp.json()
     assert body["code"] == 400, "2024001 有选课记录，不可删除"
     assert "选课" in body["message"]
 
     resp = client.delete(
-        "/api/admin/users/counselor/C001", headers=auth(admin_token)
+        "/api/admin/users/counselor/C001", cookies=admin_token
     )
     body = resp.json()
     assert body["code"] == 400, "C001 仍管辖班级，不可删除"
@@ -343,7 +331,7 @@ def test_admin_cannot_disable_self_via_update(admin_token):
     resp = client.put(
         "/api/admin/users/admin/admin",
         json={"status": 0},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     body = resp.json()
     try:
@@ -363,7 +351,7 @@ def test_admin_cannot_disable_self_via_update(admin_token):
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher", "page_size": 1},
-        headers=auth(admin_token),
+        cookies=admin_token,
     )
     assert resp.json()["code"] == 0
 
@@ -371,7 +359,7 @@ def test_admin_cannot_disable_self_via_update(admin_token):
 # ---------- 辅导员端 ----------
 
 def test_counselor_classes(counselor_token):
-    resp = client.get("/api/counselor/classes", headers=auth(counselor_token))
+    resp = client.get("/api/counselor/classes", cookies=counselor_token)
     body = resp.json()
     assert body["code"] == 0, body
     data = body["data"]
@@ -385,7 +373,7 @@ def test_counselor_students(counselor_token):
     resp = client.get(
         "/api/counselor/students",
         params={"class_id": "CLS001"},
-        headers=auth(counselor_token),
+        cookies=counselor_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -396,13 +384,13 @@ def test_counselor_students(counselor_token):
     resp = client.get(
         "/api/counselor/students",
         params={"class_id": "CLS003"},
-        headers=auth(counselor_token),
+        cookies=counselor_token,
     )
     assert resp.json()["code"] == 403
 
 
 def test_counselor_warnings_structure(counselor_token):
-    resp = client.get("/api/counselor/warnings", headers=auth(counselor_token))
+    resp = client.get("/api/counselor/warnings", cookies=counselor_token)
     body = resp.json()
     assert body["code"] == 0, body
     for w in body["data"]:
@@ -434,7 +422,7 @@ def test_counselor_warning_triggered(counselor_token):
 
     try:
         resp = client.get(
-            "/api/counselor/warnings", headers=auth(counselor_token)
+            "/api/counselor/warnings", cookies=counselor_token
         )
         body = resp.json()
         assert body["code"] == 0, body
@@ -458,7 +446,7 @@ def test_counselor_warning_triggered(counselor_token):
 def test_counselor_student_profile(counselor_token):
     resp = client.get(
         f"/api/counselor/student/{STUDENT}/profile",
-        headers=auth(counselor_token),
+        cookies=counselor_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -477,7 +465,7 @@ def test_counselor_student_profile(counselor_token):
 
 
 def test_counselor_stat(counselor_token):
-    resp = client.get("/api/counselor/stat", headers=auth(counselor_token))
+    resp = client.get("/api/counselor/stat", cookies=counselor_token)
     body = resp.json()
     assert body["code"] == 0, body
     data = body["data"]
@@ -517,7 +505,7 @@ def test_counselor_warning_homework_only(counselor_token):
         db.close()
 
     try:
-        resp = client.get("/api/counselor/warnings", headers=auth(counselor_token))
+        resp = client.get("/api/counselor/warnings", cookies=counselor_token)
         body = resp.json()
         assert body["code"] == 0, body
         target = next(
@@ -554,7 +542,7 @@ def test_interaction_flow(teacher_token, student_token):
             "student_id": STUDENT,
             "content": "pytest 课堂提问",
         },
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -567,14 +555,14 @@ def test_interaction_flow(teacher_token, student_token):
         "/api/interaction/",
         json={"course_id": "CS101", "interaction_type": "question",
               "content": "无学生"},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 400
     resp = client.post(
         "/api/interaction/",
         json={"course_id": "CS101", "interaction_type": "rating",
               "student_id": STUDENT, "score": 6},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 400
 
@@ -582,14 +570,14 @@ def test_interaction_flow(teacher_token, student_token):
     resp = client.get(
         "/api/interaction/list",
         params={"course_id": "CS101", "student_id": STUDENT},
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     items = resp.json()["data"]
     assert any(x["id"] == rec_id for x in items)
 
     # 随机点名：返回选课学生之一
     resp = client.get(
-        "/api/interaction/random-pick/CS101", headers=auth(teacher_token)
+        "/api/interaction/random-pick/CS101", cookies=teacher_token
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -598,7 +586,7 @@ def test_interaction_flow(teacher_token, student_token):
 
     # 统计：question 至少 1 条（本次），total 含 question+random_pick
     resp = client.get(
-        "/api/interaction/stats/CS101", headers=auth(teacher_token)
+        "/api/interaction/stats/CS101", cookies=teacher_token
     )
     data = resp.json()["data"]
     assert data["by_type"].get("question", 0) >= 1
@@ -609,7 +597,7 @@ def test_interaction_flow(teacher_token, student_token):
     resp = client.get(
         "/api/interaction/my",
         params={"course_id": "CS101"},
-        headers=auth(student_token),
+        cookies=student_token,
     )
     body = resp.json()
     assert body["code"] == 0, body
@@ -630,7 +618,7 @@ def test_notification_flow(teacher_token, student_token):
             "max_score": 100,
             "test_cases": [],
         },
-        headers=auth(teacher_token),
+        cookies=teacher_token,
     )
     assert resp.json()["code"] == 0, resp.json()
     hw_id = resp.json()["data"]["homework_id"]
@@ -638,7 +626,7 @@ def test_notification_flow(teacher_token, student_token):
     try:
         resp = client.get(
             "/api/notification/list", params={"limit": 50},
-            headers=auth(student_token),
+            cookies=student_token,
         )
         body = resp.json()
         assert body["code"] == 0, body
@@ -657,15 +645,15 @@ def test_notification_flow(teacher_token, student_token):
 
         # read-all → 未读清零
         resp = client.post(
-            "/api/notification/read-all", headers=auth(student_token)
+            "/api/notification/read-all", cookies=student_token
         )
         assert resp.json()["code"] == 0
         resp = client.get(
-            "/api/notification/list", headers=auth(student_token)
+            "/api/notification/list", cookies=student_token
         )
         assert resp.json()["data"]["unread_count"] == 0
     finally:
-        client.delete(f"/api/homework/{hw_id}", headers=auth(teacher_token))
+        client.delete(f"/api/homework/{hw_id}", cookies=teacher_token)
 
 
 # ---------- 越权抽查 ----------
@@ -675,7 +663,7 @@ def test_authz(student_token, counselor_token, teacher_token):
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher"},
-        headers=auth(student_token),
+        cookies=student_token,
     )
     assert resp.json()["code"] == 403
 
@@ -688,18 +676,18 @@ def test_authz(student_token, counselor_token, teacher_token):
             "student_id": "2024003",
             "content": "越权",
         },
-        headers=auth(counselor_token),
+        cookies=counselor_token,
     )
     assert resp.json()["code"] == 403
 
     # T001 操作 T002 的课程（CS103）→ 403
     resp = client.get(
-        "/api/interaction/random-pick/CS103", headers=auth(teacher_token)
+        "/api/interaction/random-pick/CS103", cookies=teacher_token
     )
     assert resp.json()["code"] == 403
 
     # 学生查辅导员预警 → 403
     resp = client.get(
-        "/api/counselor/warnings", headers=auth(student_token)
+        "/api/counselor/warnings", cookies=student_token
     )
     assert resp.json()["code"] == 403
