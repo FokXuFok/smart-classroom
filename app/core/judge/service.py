@@ -3,8 +3,10 @@
 import datetime
 import json
 import re
+import time
 
 from app.core.judge.runner import get_runner
+from app.core.logger import get_logger
 from app.database import SessionLocal
 from app.models import (
     CodeSimilarity,
@@ -13,6 +15,8 @@ from app.models import (
     SubmissionRecord,
     TestCase,
 )
+
+logger = get_logger("app.judge")
 
 SIMILARITY_THRESHOLD = 0.80
 
@@ -99,6 +103,7 @@ def judge_submission(submission_id: int, count_submit: bool = True) -> None:
     count_submit=False 用于重评：不累加 grade_book.submit_count
     """
     db = SessionLocal()
+    started = time.perf_counter()
     try:
         submission = (
             db.query(SubmissionRecord)
@@ -106,9 +111,14 @@ def judge_submission(submission_id: int, count_submit: bool = True) -> None:
             .first()
         )
         if submission is None:
+            logger.warning("评测中止：提交不存在 submission=%s", submission_id)
             return
         homework = db.get(Homework, submission.homework_id)
         if homework is None:
+            logger.warning(
+                "评测中止：作业不存在 submission=%s homework=%s",
+                submission_id, submission.homework_id,
+            )
             return
         cases = (
             db.query(TestCase)
@@ -129,6 +139,10 @@ def judge_submission(submission_id: int, count_submit: bool = True) -> None:
             db.commit()
             _upsert_gradebook(db, submission, 0, count_submit)
             _attach_feedback(db, submission, homework, [], 0)
+            logger.info(
+                "评测完成(无用例按0分) submission=%s student=%s homework=%s",
+                submission.id, submission.student_id, homework.id,
+            )
             return
 
         # 2) 逐用例执行
@@ -145,6 +159,10 @@ def judge_submission(submission_id: int, count_submit: bool = True) -> None:
             except NotImplementedError:
                 outcome = {"ok": False, "stdout": "", "stderr": "运行器未实现", "time_ms": 0}
             except Exception as exc:  # runner 崩溃不应中断整条流水线
+                logger.warning(
+                    "用例运行器异常 case=%s(%s) submission=%s: %s",
+                    case.id, case.name, submission_id, exc,
+                )
                 outcome = {"ok": False, "stdout": "", "stderr": str(exc), "time_ms": 0}
             passed = bool(outcome.get("ok")) and normalize_output(
                 outcome.get("stdout") or ""
@@ -198,6 +216,16 @@ def judge_submission(submission_id: int, count_submit: bool = True) -> None:
 
         # 6) AI 反馈（任何异常都降级为规则反馈）
         _attach_feedback(db, submission, homework, results, score)
+
+        passed_count = sum(1 for r in results if r["passed"])
+        slowest = max((r["time_ms"] or 0) for r in results)
+        logger.info(
+            "评测完成 submission=%s student=%s homework=%s lang=%s 得分=%s/%s "
+            "通过=%d/%d 最慢用例=%dms 总耗时=%.0fms",
+            submission.id, submission.student_id, homework.id, language,
+            score, max_score, passed_count, len(results), slowest,
+            (time.perf_counter() - started) * 1000,
+        )
     finally:
         db.close()
 

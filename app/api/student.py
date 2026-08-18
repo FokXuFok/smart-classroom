@@ -14,6 +14,7 @@ from app.core import face_engine, fingerprint
 from app.core.exception import BizError, ok
 from app.core.geofence import within_range
 from app.core.judge.service import judge_submission
+from app.core.logger import get_logger
 from app.models import (
     AttendanceRecord,
     CheckinSession,
@@ -28,6 +29,8 @@ from app.schemas.checkin import ApplyCheckinReq, FaceRegisterReq, SubmitCheckinR
 from app.schemas.homework import SubmitCodeReq
 
 router = APIRouter(prefix="/api/student", tags=["student-checkin"])
+
+logger = get_logger("app.checkin")
 
 ATT_STATUS_CN = {0: "缺勤", 1: "正常", 2: "迟到", 3: "早退", 4: "请假"}
 
@@ -223,17 +226,29 @@ def submit_checkin(
     )
     if not in_range:
         if dist >= 0:
+            logger.warning(
+                "签到被拒(超出范围) student=%s session=%s course=%s 距离=%dm 限=%dm",
+                sno, session.id, session.course_id, round(dist), session.range_meters,
+            )
             raise BizError(
                 2003,
                 f"超出签到范围（距离签到点 {round(dist)} 米，"
                 f"允许范围 {session.range_meters} 米）",
             )
+        logger.warning(
+            "签到被拒(无定位) student=%s session=%s course=%s",
+            sno, session.id, session.course_id,
+        )
         raise BizError(2003, "未获取到定位信息，无法签到")
 
     # 6) 人脸检测与嵌入
     eng = face_engine.get_engine()
     embedding, _face = eng.embed_b64_best(req.image_b64)
     if embedding is None:
+        logger.warning(
+            "签到被拒(未检出人脸) student=%s session=%s course=%s",
+            sno, session.id, session.course_id,
+        )
         raise BizError(400, "未检测到人脸，请正对摄像头重试")
 
     # 7) 相似度比对：不足则转人工复核
@@ -255,6 +270,10 @@ def submit_checkin(
             )
         )
         db.commit()
+        logger.warning(
+            "签到转人工复核(相似度不足) student=%s session=%s course=%s sim=%.3f 阈值=%.2f",
+            sno, session.id, session.course_id, sim, config.FACE_SIM_THRESHOLD,
+        )
         raise BizError(2002, f"人脸相似度不足({sim:.2f})，已提交人工复核")
 
     # 8) 指纹核验（预留，不阻断）
@@ -303,6 +322,11 @@ def submit_checkin(
         db.rollback()
         raise BizError(2005, "该会话已签到，请勿重复提交")
     db.refresh(rec)
+    logger.info(
+        "签到成功 student=%s session=%s course=%s status=%s(%s) sim=%.3f 距离=%dm 活体=%s",
+        sno, session.id, session.course_id, status, ATT_STATUS_CN.get(status),
+        sim, round(dist), is_live,
+    )
 
     return ok(
         {
@@ -349,6 +373,7 @@ def face_register(
         pass
     student.face_image_url = face_image_url
     db.commit()
+    logger.info("人脸注册成功 student=%s", student.student_no)
     return ok(
         {"student_no": student.student_no, "face_image_url": face_image_url},
         message="人脸注册成功",

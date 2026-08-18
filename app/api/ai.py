@@ -20,6 +20,7 @@ from app.core.ai_client import (
 )
 from app.core.exception import BizError, ok
 from app.core.judge.service import rule_feedback
+from app.core.logger import get_logger
 from app.models import (
     AiKnowledgeBase,
     AiQaRecord,
@@ -34,6 +35,8 @@ router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 KNOWLEDGE_SNIPPET_MAX = 500  # 单条知识片段送入 AI 的截断长度
 GRADE_CONCURRENCY = 4  # 全量批改的最大并发 AI 调用数（兼顾等待时间与 AI 配额）
+
+grade_log = get_logger("app.ai")
 
 
 # ---------- 请求模型 ----------
@@ -349,6 +352,10 @@ async def ai_grade_all(
         sub.ai_feedback = feedback
         sub.status = 2
     db.commit()
+    grade_log.info(
+        "AI 批量批改完成 homework=%s 提交=%d 成功=%d 降级=%d 失败=%d",
+        homework_id, len(submissions), graded, degraded, failed,
+    )
     return ok(
         {"graded": graded, "failed": failed, "degraded": degraded},
         message=(

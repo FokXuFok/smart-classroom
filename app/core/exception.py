@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """统一业务异常与响应包装"""
-import traceback
-
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+
+from app.core.logger import get_logger
 
 
 class BizError(Exception):
@@ -39,7 +39,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request, exc: Exception):
-        traceback.print_exc()
+        get_logger("app.error").exception(
+            "未捕获异常 %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+        )
         # 细节仅落服务端日志，不向客户端回显（避免泄露 SQL/路径等内部信息）
         return JSONResponse(
             status_code=200,

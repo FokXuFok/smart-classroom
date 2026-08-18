@@ -2,10 +2,14 @@
 """AI 客户端：阿里百炼（OpenAI 兼容接口，deepseek-V4-pro）
 任何失败（网络/超时/Key无效/限流）→ AiUnavailable，由调用方降级"""
 import json
+import time
 
 import httpx
 
 import config
+from app.core.logger import get_logger
+
+logger = get_logger("app.ai")
 
 
 class AiUnavailable(Exception):
@@ -36,11 +40,20 @@ def chat(messages: list, temperature: float = 0.3, max_tokens: int = 2000) -> st
         "enable_thinking": False,
     }
     headers = {"Authorization": f"Bearer {config.AI_API_KEY}"}
+    started = time.perf_counter()
     try:
         resp = _get_client().post(url, json=payload, headers=headers)
     except httpx.HTTPError as exc:
+        logger.warning(
+            "AI 调用失败(网络) model=%s 耗时=%.1fs 错误=%s",
+            config.AI_MODEL, time.perf_counter() - started, type(exc).__name__,
+        )
         raise AiUnavailable(f"网络错误: {type(exc).__name__}")
     if resp.status_code != 200:
+        logger.warning(
+            "AI 调用失败(HTTP %s) model=%s 耗时=%.1fs",
+            resp.status_code, config.AI_MODEL, time.perf_counter() - started,
+        )
         raise AiUnavailable(f"HTTP {resp.status_code}: {resp.text[:200]}")
     try:
         data = resp.json()
@@ -48,10 +61,24 @@ def chat(messages: list, temperature: float = 0.3, max_tokens: int = 2000) -> st
         if choice.get("finish_reason") == "length":
             raise AiUnavailable("AI 输出被截断(max_tokens)")
         content = choice["message"].get("content")
+    except AiUnavailable:
+        logger.warning(
+            "AI 输出被截断 model=%s max_tokens=%s", config.AI_MODEL, max_tokens
+        )
+        raise
     except (ValueError, KeyError, IndexError, TypeError) as exc:
+        logger.warning(
+            "AI 响应格式异常 model=%s: %s", config.AI_MODEL, type(exc).__name__
+        )
         raise AiUnavailable(f"响应格式异常: {type(exc).__name__}")
     if not content:
+        logger.warning("AI 返回空内容 model=%s", config.AI_MODEL)
         raise AiUnavailable("模型返回空内容")
+    logger.info(
+        "AI 调用成功 model=%s 耗时=%.1fs 输入=%d条 输出=%d字",
+        config.AI_MODEL, time.perf_counter() - started,
+        len(messages), len(content),
+    )
     return content
 
 

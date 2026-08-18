@@ -7,3 +7,4 @@ models_cache/
 venv/
 uploads/
 .idea/
+logs/
