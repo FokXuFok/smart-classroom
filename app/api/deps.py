@@ -8,11 +8,11 @@ from fastapi import Depends, Request
 
 import config
 from app.core.exception import BizError
-from app.core.security import decode_token
+from app.core.security import decode_token, is_token_revoked
 from app.database import get_db  # noqa: F401  直接 re-export
 from app.models import Admin, Counselor, Student, Teacher
 
-CurrentUser = namedtuple("CurrentUser", ["user", "role"])
+CurrentUser = namedtuple("CurrentUser", ["user", "role", "jti", "exp"])
 
 # role → (ORM 类, 主键字段名)
 ROLE_MODEL_PK = {
@@ -56,6 +56,11 @@ def get_current_user(
     if payload.get("instance_id") != config.INSTANCE_ID:
         raise BizError(401, "登录已过期，请重新登录")
 
+    # 校验黑名单：登出后的 token 立即失效
+    jti = payload.get("jti")
+    if not jti or is_token_revoked(jti):
+        raise BizError(401, "登录已失效，请重新登录")
+
     # 按 role 查表
     role = payload.get("role")
     user_id = payload.get("sub")
@@ -70,7 +75,7 @@ def get_current_user(
     if getattr(user, "status", 1) == 0:
         raise BizError(403, "账号被禁用")
 
-    return CurrentUser(user=user, role=role)
+    return CurrentUser(user=user, role=role, jti=jti, exp=payload.get("exp"))
 
 
 def require_roles(*roles):

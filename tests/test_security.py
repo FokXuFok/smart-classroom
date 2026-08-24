@@ -7,6 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import config
+from app.api.files import serve_upload
+from app.core.exception import BizError
 from app.core.security import (
     create_token,
     decode_token,
@@ -126,3 +128,88 @@ def test_login_wrong_password_locked(cleanup_lock):
         json={"username": USERNAME, "password": "123456", "role": "student"},
     )
     assert resp.json()["code"] == 1002
+
+
+# ---------- 登出黑名单：旧 token 立即失效 ----------
+
+def test_logout_revokes_token():
+    c = TestClient(app)
+    c.post(
+        "/api/auth/login",
+        json={"username": USERNAME, "password": "123456", "role": "student"},
+    )
+    # 登出前可用
+    assert c.get("/api/auth/me").json()["code"] == 0
+    # 登出
+    assert c.post("/api/auth/logout").json()["code"] == 0
+    # 旧 token（即使 cookie 被恢复）已入黑名单 → 401
+    resp = client.get(
+        "/api/auth/me", cookies={"sc_token_student": c.cookies.get("sc_token_student")}
+    )
+    assert resp.json()["code"] == 401
+
+
+def test_revoked_blacklist_unit():
+    """黑名单单元行为：加入后命中，过期后自动清理"""
+    from app.core.security import is_token_revoked, revoke_token
+
+    jti = "test-jti-abcdef"
+    exp = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) + 3600
+    revoke_token(jti, exp)
+    assert is_token_revoked(jti) is True
+    # 过期条目：命中时被清理并返回 False
+    past = int(datetime.datetime.now(datetime.timezone.utc).timestamp()) - 1
+    revoke_token("expired-jti", past)
+    assert is_token_revoked("expired-jti") is False
+    assert is_token_revoked("never-seen") is False
+
+
+# ---------- /uploads 鉴权 ----------
+
+@pytest.fixture()
+def upload_file():
+    """在上传目录造一个临时文件，测试后删除"""
+    target = config.UPLOAD_DIR / "face" / "test_upload_auth.jpg"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"fake-image-bytes")
+    yield target
+    target.unlink(missing_ok=True)
+
+
+def test_uploads_requires_login(upload_file):
+    # 未登录：即使文件存在也 401
+    resp = client.get("/uploads/face/test_upload_auth.jpg")
+    assert resp.status_code == 200  # 业务码在 body（项目约定 HTTP 恒 200）
+    assert resp.json()["code"] == 401
+
+
+def test_uploads_serve_after_login(upload_file):
+    cookies = TestClient(app).post(
+        "/api/auth/login",
+        json={"username": USERNAME, "password": "123456", "role": "student"},
+    ).cookies.get("sc_token_student")
+    resp = client.get(
+        "/uploads/face/test_upload_auth.jpg",
+        cookies={"sc_token_student": cookies},
+    )
+    assert resp.status_code == 200
+    assert resp.content == b"fake-image-bytes"
+
+
+def test_uploads_traversal_blocked():
+    """路径穿越必须被拦截（直接调函数级，绕过 HTTP 客户端路径规范化）"""
+    # 构造伪 CurrentUser（鉴权已由路由依赖完成，这里只测路径校验逻辑）
+    from collections import namedtuple
+    FakeUser = namedtuple("FakeUser", ["student_no", "name", "status"])
+    fake_current = namedtuple("Current", ["user", "role", "jti", "exp"])(
+        user=FakeUser(USERNAME, "张三", 1), role="student", jti="x", exp=0
+    )
+    for evil in ["../config.py", "..\\..\\.env", "face/../../main.py"]:
+        with pytest.raises(BizError) as exc_info:
+            serve_upload(evil, fake_current)
+        assert exc_info.value.code == 404
+
+    # 不存在的文件同样 404
+    with pytest.raises(BizError) as exc_info:
+        serve_upload("face/no_such_file.jpg", fake_current)
+    assert exc_info.value.code == 404

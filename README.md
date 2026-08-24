@@ -56,9 +56,9 @@ python main.py --seed
 │   ├── init_db.py           # 数据库增量升级（幂等，只补不删）
 │   └── seed_demo.py         # 演示种子数据（幂等）
 ├── web/                     # 四端静态前端（index/student/teacher/counselor/admin）
-├── uploads/                 # 签到自拍/人脸照片等上传文件（/uploads 托管）
+├── uploads/                 # 签到自拍/人脸照片等上传文件（/uploads 鉴权访问）
 ├── logs/                    # 运行日志（按天滚动，保留 14 天；不入库）
-└── tests/                   # pytest（99 用例）
+└── tests/                   # pytest（104 用例）
 ```
 
 ## 技术栈 / 架构
@@ -84,14 +84,14 @@ python main.py --seed
 python -m pytest tests/ -q
 ```
 
-当前 99 个用例全部通过（签到鉴权、人脸引擎、围栏、作业评测、预警、管理端等）。
+当前 104 个用例全部通过（签到鉴权、人脸引擎、围栏、作业评测、预警、管理端等）。
 
 ## 安全注意
 
 以下均为**本地演示口径**，仅限单机演示使用；上生产前必须逐项整改：
 
 - 数据库密码、AI Key、**JWT SECRET_KEY** 均存于本地 `.env`（已 gitignore、不入库），生产请改用密钥管理服务并更换 SECRET；
-- JWT 为无状态 12 小时有效期：登出/重置密码后旧 token 在过期前仍有效（演示可接受，生产需缩短有效期并引入黑名单/刷新机制）；
-- `/uploads` 静态目录为公开托管（签到照片等），生产需加访问鉴权或签名 URL；
+- JWT 登出已失效：token 带 `jti`，登出即加入内存黑名单（服务重启黑名单清空，但 `instance_id` 同步变更，旧 token 依然全部失效）。黑名单为单进程内存版，多进程/多实例部署需换 Redis；
+- `/uploads` 已改为鉴权接口（`app/api/files.py`）：未登录 401，路径越界 404，登录后同路径可直接访问（前端与库中 URL 零改动）；
 - 评测沙箱为本地子进程隔离（黑名单防护），生产必须切换预留的 Docker Runner（`--network=none` 强隔离）；
 - CORS 当前 `allow_origins=["*"]`，生产需配置真实域名白名单并启用 HTTPS。

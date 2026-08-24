@@ -62,6 +62,7 @@ register_exception_handlers(app)
 app.include_router(api_router)
 
 # 静态托管：必须位于 include_router 之后，保证 /api/** 优先匹配
+# /uploads 已改为鉴权接口（app/api/files.py），不再公开托管；
+# include_router 在前，/uploads/** 由鉴权路由接管，其余路径落到前端静态页
 config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 app.mount("/", StaticFiles(directory=config.BASE_DIR / "web", html=True), name="web")

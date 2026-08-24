@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Request, Response
 import config
 from app.api.deps import ROLE_MODEL_PK, CurrentUser, get_current_user
 from app.core.exception import BizError, ok
-from app.core.security import create_token, verify_password
+from app.core.security import create_token, revoke_token, verify_password
 from app.database import get_db
 from app.models import AuditLog, LoginAttempt
 from app.schemas.auth import LoginReq
@@ -85,7 +85,9 @@ def login(req: LoginReq, request: Request, response: Response, db=Depends(get_db
 
 @router.post("/logout")
 def logout(current: CurrentUser = Depends(get_current_user), response: Response = None):
-    """退出登录：删除当前角色的 cookie"""
+    """退出登录：吊销当前 token + 删除当前角色的 cookie"""
+    # token 加入黑名单：即使 cookie 被浏览器恢复，旧 token 也无法使用
+    revoke_token(current.jti, current.exp)
     if response:
         response.delete_cookie(f"sc_token_{current.role}", path="/")
     return ok()
