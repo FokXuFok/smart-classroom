@@ -287,11 +287,20 @@ def toggle_status(
     user = _get_user(db, role, user_id)
     if role == "admin" and user_id == current.user.admin_no:
         raise BizError(400, "不能禁用当前登录管理员")
-    user.status = 0 if getattr(user, "status", 1) == 1 else 1
+    cur = getattr(user, "status", 1)
+    if cur == 2:        # 待审批 → 审批通过
+        user.status = 1
+        action = "审批通过"
+    elif cur == 1:      # 正常 → 禁用
+        user.status = 0
+        action = "禁用"
+    else:               # 禁用 → 启用
+        user.status = 1
+        action = "启用"
     db.commit()
     _audit(
         db, current.user.admin_no, "toggle_status", "user", user_id,
-        f"{role} {user_id} 状态切换为 {'启用' if user.status == 1 else '禁用'}",
+        f"{role} {user_id} {action}",
     )
     return ok({"user_id": user_id, "role": role, "status": user.status}, message="状态已切换")
 

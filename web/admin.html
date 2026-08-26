@@ -112,13 +112,16 @@
           var id = u.user_id || u.student_no || u.teacher_no || u.counselor_no || u.user_no;
           var name = u.name || "";
           var dept = u.class_name || u.class_id || u.department || u.title || "—";
-          var st = u.status === 0
-            ? '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">禁用</span>'
-            : '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">正常</span>';
+          var st = u.status === 2
+            ? '<span class="badge badge-pending">待审批</span>'
+            : (u.status === 0
+              ? '<span class="badge badge-absent">已禁用</span>'
+              : '<span class="badge badge-ok">正常</span>');
+          var toggleLabel = u.status === 2 ? "审批通过" : (u.status === 0 ? "启用" : "禁用");
           return "<tr><td>" + esc(id) + '</td><td><b>' + esc(name) + "</b></td><td>" + esc(dept) + "</td><td>" + st +
             '</td><td><div class="row">' +
             '<button class="btn btn-outline btn-sm" data-reset="' + curRole + "/" + esc(id) + '">重置密码</button>' +
-            '<button class="btn btn-outline btn-sm" data-toggle="' + curRole + "/" + esc(id) + '">' + (u.status === 0 ? "启用" : "禁用") + "</button>" +
+            '<button class="btn btn-outline btn-sm" data-toggle="' + curRole + "/" + esc(id) + '">' + toggleLabel + "</button>" +
             "</div></td></tr>";
         }).join("");
         $("u-list").innerHTML =

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""认证路由：登录 / 登出 / 当前用户信息
+"""认证路由：登录 / 登出 / 注册 / 当前用户信息
 
-token 存放在 httpOnly cookie（按角色命名 sc_token_<role>），会话级。
+token 存放在 httpOnly cookie（统一命名 sc_token），会话级。
+登录不指定角色，后端根据账号自动判断身份（四张用户表逐个查找）。
 前端 JS 不可读，fetch 同源自动携带，杜绝 XSS 窃取与浏览器存储残留。
 """
 import datetime
@@ -11,15 +12,29 @@ from fastapi import APIRouter, Depends, Request, Response
 import config
 from app.api.deps import ROLE_MODEL_PK, CurrentUser, get_current_user
 from app.core.exception import BizError, ok
-from app.core.security import create_token, revoke_token, verify_password
+from app.core.security import (
+    create_token,
+    hash_password,
+    revoke_token,
+    verify_password,
+)
 from app.database import get_db
-from app.models import AuditLog, LoginAttempt
-from app.schemas.auth import LoginReq
+from app.models import AuditLog, ClassInfo, LoginAttempt, Student, Teacher
+from app.schemas.auth import LoginReq, RegisterReq
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 LOCK_THRESHOLD = 5      # 连续失败次数阈值
 LOCK_MINUTES = 10       # 锁定时长（分钟）
+
+
+def _find_user(db, username: str):
+    """按账号在四张用户表中查找，返回 (user, role)；找不到返回 (None, None)"""
+    for role, (model, pk) in ROLE_MODEL_PK.items():
+        user = db.query(model).filter(getattr(model, pk) == username).first()
+        if user is not None:
+            return user, role
+    return None, None
 
 
 @router.post("/login")
@@ -34,13 +49,15 @@ def login(req: LoginReq, request: Request, response: Response, db=Depends(get_db
     if attempt and attempt.lock_until and attempt.lock_until > now:
         raise BizError(1002, "失败次数过多，账号已锁定，请10分钟后再试")
 
-    # ---- 按 role 查表 ----
-    model, pk = ROLE_MODEL_PK[req.role]
-    user = db.query(model).filter(getattr(model, pk) == username).first()
+    # ---- 自动判断身份：四表逐个查找 ----
+    user, role = _find_user(db, username)
     if user is None:
         raise BizError(404, "账号不存在")
-    if getattr(user, "status", 1) == 0:
-        raise BizError(1003, "账号被禁用，请联系管理员")
+    status = getattr(user, "status", 1)
+    if status == 2:
+        raise BizError(1003, "账号待审批，请联系管理员")
+    if status == 0:
+        raise BizError(1003, "账号已禁用，请联系管理员")
 
     # ---- 密码校验 + 失败计数/锁定 ----
     if not verify_password(req.password, user.password or ""):
@@ -62,34 +79,36 @@ def login(req: LoginReq, request: Request, response: Response, db=Depends(get_db
         AuditLog(
             action="login",
             user_id=username,
-            user_role=req.role,
+            user_role=role,
             ip=request.client.host if request.client else None,
         )
     )
     db.commit()
 
-    token = create_token(username, req.role, user.name, config.INSTANCE_ID)
+    token = create_token(username, role, user.name, config.INSTANCE_ID)
 
-    # token 写入 httpOnly 会话 cookie（按角色分名，四端互不覆盖）
+    # token 写入 httpOnly 会话 cookie（统一命名 sc_token，登录新账号直接覆盖）
     # 不设 max_age → 浏览器关闭即删除
-    cookie_name = f"sc_token_{req.role}"
     response.set_cookie(
-        cookie_name, token,
+        "sc_token", token,
         path="/", samesite="lax", httponly=True,
     )
 
     return ok(
-        {"role": req.role, "name": user.name, "user_id": username}
+        {"role": role, "name": user.name, "user_id": username}
     )
 
 
 @router.post("/logout")
 def logout(current: CurrentUser = Depends(get_current_user), response: Response = None):
-    """退出登录：吊销当前 token + 删除当前角色的 cookie"""
+    """退出登录：吊销当前 token + 删除 cookie"""
     # token 加入黑名单：即使 cookie 被浏览器恢复，旧 token 也无法使用
     revoke_token(current.jti, current.exp)
     if response:
-        response.delete_cookie(f"sc_token_{current.role}", path="/")
+        response.delete_cookie("sc_token", path="/")
+        # 清理旧版按角色命名遗留的 cookie（sc_token_*），避免历史残留干扰
+        for role in ("student", "teacher", "counselor", "admin"):
+            response.delete_cookie(f"sc_token_{role}", path="/")
     return ok()
 
 
@@ -100,6 +119,66 @@ def me(current: CurrentUser = Depends(get_current_user)):
     role = current.role
     data = {"user_id": getattr(user, _pk_attr(role)), "role": role, "name": user.name}
     return ok(data)
+
+
+@router.post("/register")
+def register(req: RegisterReq, db=Depends(get_db)):
+    """自助注册：学生 / 教师，status=0 待管理员审批"""
+    username = req.username.strip()
+    if not username:
+        raise BizError(400, "账号不能为空")
+    if len(username) > 20:
+        raise BizError(400, "账号长度不能超过 20 位")
+    if not req.name or not req.name.strip():
+        raise BizError(400, "姓名不能为空")
+    if len(req.password or "") < 6:
+        raise BizError(400, "密码至少 6 位")
+
+    # 账号已存在（四表任意命中）
+    existing, _ = _find_user(db, username)
+    if existing is not None:
+        raise BizError(400, "该账号已存在")
+
+    if req.role == "student":
+        if not req.class_id:
+            raise BizError(400, "学生必须选择班级")
+        if (
+            db.query(ClassInfo)
+            .filter(ClassInfo.class_code == req.class_id)
+            .first()
+            is None
+        ):
+            raise BizError(404, "班级不存在")
+        user = Student(
+            student_no=username,
+            name=req.name.strip(),
+            class_id=req.class_id,
+            password=hash_password(req.password),
+        )
+    else:  # teacher
+        user = Teacher(
+            teacher_no=username,
+            name=req.name.strip(),
+            password=hash_password(req.password),
+        )
+    user.status = 2  # 待审批
+    db.add(user)
+    db.commit()
+    return ok(
+        {"user_id": username, "role": req.role},
+        message="注册成功，请等待管理员审核通过后登录",
+    )
+
+
+@router.get("/class-options")
+def class_options(db=Depends(get_db)):
+    """公开班级列表（注册页下拉选择）"""
+    rows = (
+        db.query(ClassInfo.class_code, ClassInfo.class_name)
+        .order_by(ClassInfo.class_code)
+        .all()
+    )
+    return ok([{"class_code": c, "class_name": n} for c, n in rows])
 
 
 def _pk_attr(role: str) -> str:

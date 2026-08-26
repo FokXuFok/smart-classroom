@@ -35,7 +35,7 @@ class Student(Base):
     password = Column(
         String(100), server_default=text("'123456'"), comment="登录密码"
     )
-    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常")
+    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常, 2-待审批")
     create_time = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     update_time = Column(
         DateTime,
@@ -67,7 +67,7 @@ class Teacher(Base):
     password = Column(
         String(100), server_default=text("'123456'"), comment="登录密码"
     )
-    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常")
+    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常, 2-待审批")
     create_time = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     update_time = Column(
         DateTime,
@@ -94,7 +94,7 @@ class Counselor(Base):
     password = Column(
         String(100), server_default=text("'123456'"), comment="登录密码"
     )
-    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常")
+    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常, 2-待审批")
     create_time = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     update_time = Column(
         DateTime,
@@ -115,5 +115,5 @@ class Admin(Base):
     admin_no = Column(String(20), primary_key=True, comment="管理员编号")
     name = Column(String(50), nullable=False, comment="姓名")
     password = Column(String(100), nullable=False, comment="登录密码（bcrypt 哈希）")
-    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常")
+    status = Column(TINYINT, server_default=text("1"), comment="状态: 0-禁用, 1-正常, 2-待审批")
     create_time = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"))

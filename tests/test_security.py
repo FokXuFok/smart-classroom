@@ -17,7 +17,7 @@ from app.core.security import (
 )
 from app.database import SessionLocal
 from app.main import app
-from app.models import LoginAttempt
+from app.models import LoginAttempt, Student, Teacher
 
 client = TestClient(app)
 
@@ -31,6 +31,20 @@ def cleanup_lock():
     db = SessionLocal()
     try:
         db.query(LoginAttempt).filter(LoginAttempt.username == USERNAME).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.fixture()
+def cleanup_reg_users():
+    """注册流程测试后清理：删除注册产生的人员行"""
+    yield
+    db = SessionLocal()
+    try:
+        for model, pk, no in [(Student, "student_no", "R2026001"),
+                              (Teacher, "teacher_no", "R9999")]:
+            db.query(model).filter(getattr(model, pk) == no).delete()
         db.commit()
     finally:
         db.close()
@@ -85,23 +99,154 @@ def test_login_success():
     c = TestClient(app)
     resp = c.post(
         "/api/auth/login",
-        json={"username": USERNAME, "password": "123456", "role": "student"},
+        json={"username": USERNAME, "password": "123456"},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
-    # token 现经 httpOnly cookie 下发，响应体不再含 token 字段
-    cookie = resp.cookies.get("sc_token_student")
-    assert cookie, "登录响应未下发 sc_token_student cookie"
+    # token 现经 httpOnly cookie 下发（统一命名 sc_token），响应体不再含 token 字段
+    cookie = resp.cookies.get("sc_token")
+    assert cookie, "登录响应未下发 sc_token cookie"
     assert body["data"]["role"] == "student"
     assert body["data"]["user_id"] == USERNAME
 
-    me = client.get("/api/auth/me", cookies={"sc_token_student": cookie})
+    me = client.get("/api/auth/me", cookies={"sc_token": cookie})
     me_body = me.json()
     assert me_body["code"] == 0
     assert me_body["data"]["name"] == "张三"
     assert me_body["data"]["role"] == "student"
     assert me_body["data"]["user_id"] == USERNAME
+
+
+def test_login_auto_detect_role():
+    """不指定角色，后端按账号自动判断身份"""
+    for username, password, role in [("2024001", "123456", "student"),
+                                     ("T001", "123456", "teacher"),
+                                     ("C001", "123456", "counselor"),
+                                     ("admin", "admin123", "admin")]:
+        resp = TestClient(app).post(
+            "/api/auth/login",
+            json={"username": username, "password": password},
+        )
+        body = resp.json()
+        assert body["code"] == 0, body
+        assert body["data"]["role"] == role, f"{username} 身份判断错误"
+
+
+def test_login_unified_cookie_no_cross_account():
+    """串号根因回归：登录 A 后再登录 B，cookie 统一为 sc_token 并被覆盖，
+    绝不会残留多个角色 cookie 导致取错身份"""
+    c = TestClient(app)
+    # 先登录学生，再登录教师 → 同一 cookie 名被覆盖
+    c.post("/api/auth/login", json={"username": USERNAME, "password": "123456"})
+    first = c.cookies.get("sc_token")
+    assert first
+    c.post("/api/auth/login", json={"username": "T001", "password": "123456"})
+    assert c.cookies.get("sc_token") != first
+    # 当前身份必须是教师（而非最开始的账号）
+    me = c.get("/api/auth/me").json()
+    assert me["code"] == 0
+    assert me["data"]["user_id"] == "T001"
+    assert me["data"]["role"] == "teacher"
+
+
+# ---------- 注册 → 管理员审批 → 登录 ----------
+
+def _reg_student(c, username="R2026001", password="abc123"):
+    """注册学生（班级 CLS001），返回响应体"""
+    resp = c.post("/api/auth/register", json={
+        "username": username, "password": password, "name": "注册学生",
+        "role": "student", "class_id": "CLS001",
+    })
+    return resp.json()
+
+
+def test_register_student_pending_approval(cleanup_reg_users):
+    c = TestClient(app)
+    body = _reg_student(c)
+    assert body["code"] == 0, body
+    assert "待管理员审核" in body["message"]
+
+    # 注册即创建 status=2（待审批）
+    db = SessionLocal()
+    try:
+        row = db.query(Student).filter(Student.student_no == "R2026001").first()
+        assert row is not None
+        assert row.status == 2
+    finally:
+        db.close()
+
+    # 待审批账号不能登录
+    resp = c.post("/api/auth/login", json={"username": "R2026001", "password": "abc123"})
+    assert resp.json()["code"] == 1003
+    assert "待审批" in resp.json()["message"]
+
+    # 重复注册 → 400
+    assert _reg_student(c)["code"] == 400
+
+    # 班级不存在 → 404
+    resp = c.post("/api/auth/register", json={
+        "username": "R2026002", "password": "abc123", "name": "无班生",
+        "role": "student", "class_id": "NOPE",
+    })
+    assert resp.json()["code"] == 404
+
+
+def test_register_teacher_and_class_options(cleanup_reg_users):
+    c = TestClient(app)
+    resp = c.post("/api/auth/register", json={
+        "username": "R9999", "password": "abc123", "name": "注册教师",
+        "role": "teacher",
+    })
+    assert resp.json()["code"] == 0, resp.json()
+
+    db = SessionLocal()
+    try:
+        row = db.query(Teacher).filter(Teacher.teacher_no == "R9999").first()
+        assert row is not None and row.status == 2
+    finally:
+        db.close()
+
+    # 班级列表公开可读（注册页下拉）
+    resp = c.get("/api/auth/class-options")
+    body = resp.json()
+    assert body["code"] == 0
+    codes = {x["class_code"] for x in body["data"]}
+    assert "CLS001" in codes
+
+
+def test_admin_approve_registered_user(cleanup_reg_users):
+    c = TestClient(app)
+    _reg_student(c)
+
+    # 管理员登录 → 列表可见待审批账号
+    admin = TestClient(app)
+    resp = admin.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    assert resp.json()["code"] == 0, resp.json()
+    admin_cookies = {"sc_token": resp.cookies.get("sc_token")}
+
+    resp = client.get(
+        "/api/admin/users", params={"role": "student", "keyword": "R2026001"},
+        cookies=admin_cookies,
+    )
+    body = resp.json()
+    assert body["code"] == 0
+    item = next(u for u in body["data"]["items"] if u["user_id"] == "R2026001")
+    assert item["status"] == 2
+
+    # 审批通过（toggle-status：2 → 1）
+    resp = client.post(
+        "/api/admin/users/student/R2026001/toggle-status", cookies=admin_cookies
+    )
+    assert resp.json()["code"] == 0
+    assert resp.json()["data"]["status"] == 1
+
+    # 审批通过后可正常登录并访问
+    login = TestClient(app)
+    resp = login.post("/api/auth/login", json={"username": "R2026001", "password": "abc123"})
+    assert resp.json()["code"] == 0, resp.json()
+    me = login.get("/api/auth/me").json()
+    assert me["code"] == 0 and me["data"]["role"] == "student"
 
 
 def test_me_without_token():
@@ -118,14 +263,14 @@ def test_login_wrong_password_locked(cleanup_lock):
     for _ in range(5):
         resp = client.post(
             "/api/auth/login",
-            json={"username": USERNAME, "password": "wrong-pass", "role": "student"},
+            json={"username": USERNAME, "password": "wrong-pass"},
         )
         assert resp.json()["code"] == 1001
 
     # 第 6 次（即使密码正确）也被锁定拦截：1002
     resp = client.post(
         "/api/auth/login",
-        json={"username": USERNAME, "password": "123456", "role": "student"},
+        json={"username": USERNAME, "password": "123456"},
     )
     assert resp.json()["code"] == 1002
 
@@ -136,7 +281,7 @@ def test_logout_revokes_token():
     c = TestClient(app)
     c.post(
         "/api/auth/login",
-        json={"username": USERNAME, "password": "123456", "role": "student"},
+        json={"username": USERNAME, "password": "123456"},
     )
     # 登出前可用
     assert c.get("/api/auth/me").json()["code"] == 0
@@ -144,7 +289,7 @@ def test_logout_revokes_token():
     assert c.post("/api/auth/logout").json()["code"] == 0
     # 旧 token（即使 cookie 被恢复）已入黑名单 → 401
     resp = client.get(
-        "/api/auth/me", cookies={"sc_token_student": c.cookies.get("sc_token_student")}
+        "/api/auth/me", cookies={"sc_token": c.cookies.get("sc_token")}
     )
     assert resp.json()["code"] == 401
 
@@ -186,11 +331,11 @@ def test_uploads_requires_login(upload_file):
 def test_uploads_serve_after_login(upload_file):
     cookies = TestClient(app).post(
         "/api/auth/login",
-        json={"username": USERNAME, "password": "123456", "role": "student"},
-    ).cookies.get("sc_token_student")
+        json={"username": USERNAME, "password": "123456"},
+    ).cookies.get("sc_token")
     resp = client.get(
         "/uploads/face/test_upload_auth.jpg",
-        cookies={"sc_token_student": cookies},
+        cookies={"sc_token": cookies},
     )
     assert resp.status_code == 200
     assert resp.content == b"fake-image-bytes"

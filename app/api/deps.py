@@ -24,11 +24,14 @@ ROLE_MODEL_PK = {
 
 
 def _extract_token(request: Request) -> Optional[str]:
-    """从 httpOnly cookie 读取 token（按角色遍历），兼容旧版 Authorization 头"""
-    for role_name in ROLE_MODEL_PK:
-        val = request.cookies.get(f"sc_token_{role_name}")
-        if val:
-            return val
+    """从 httpOnly cookie 读取 token（统一 sc_token），兼容旧版 Authorization 头
+
+    单一 cookie 名从根上避免多角色 cookie 并存导致的串号：
+    登录新账号直接覆盖旧 cookie，浏览器任何时候只有一个登录态。
+    """
+    val = request.cookies.get("sc_token")
+    if val:
+        return val
     # 兼容旧版 Authorization: Bearer xxx
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
@@ -69,11 +72,11 @@ def get_current_user(
     model, pk = ROLE_MODEL_PK[role]
     user = db.query(model).filter(getattr(model, pk) == user_id).first()
 
-    # 查无此人 / 账号被禁用
+    # 查无此人 / 账号被禁用或待审批
     if user is None:
         raise BizError(401, "未登录或登录已过期")
-    if getattr(user, "status", 1) == 0:
-        raise BizError(403, "账号被禁用")
+    if getattr(user, "status", 1) != 1:
+        raise BizError(403, "账号不可用（待审批或已禁用）")
 
     return CurrentUser(user=user, role=role, jti=jti, exp=payload.get("exp"))
 

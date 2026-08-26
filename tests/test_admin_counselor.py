@@ -182,7 +182,7 @@ def test_admin_user_crud_loop(admin_token):
     assert resp.json()["code"] == 0
     body = TestClient(app).post(
         "/api/auth/login",
-        json={"username": "T999", "password": "123456", "role": "teacher"},
+        json={"username": "T999", "password": "123456"},
     ).json()
     assert body["code"] == 0, body
 
@@ -194,7 +194,7 @@ def test_admin_user_crud_loop(admin_token):
     assert resp.json()["data"]["status"] == 0
     body = TestClient(app).post(
         "/api/auth/login",
-        json={"username": "T999", "password": "123456", "role": "teacher"},
+        json={"username": "T999", "password": "123456"},
     ).json()
     assert body["code"] in (403, 1003)
 
