@@ -21,12 +21,13 @@
 
 <script src="js/api.js"></script>
 <script src="js/demo.js"></script>
+<script src="js/echarts.min.js"></script>
 <script>
 (function () {
   "use strict";
   var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
 
-  demo.initDemo("辅导员端").then(function () {
+  demo.initDemo("辅导员端", "counselor").then(function () {
     demo.notifWatcher();
     var m = document.querySelector("main.content");
     demo.buildTabs(m, [
@@ -45,6 +46,8 @@
       '<div class="card stat-card stat-ok"><div class="stat-label">平均出勤率</div><div class="stat-value" id="ov-rate">—</div></div>' +
       '<div class="card stat-card stat-absent"><div class="stat-label">预警学生</div><div class="stat-value" id="ov-warn">—</div></div>' +
       '</div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">预警学生出勤率（越低越需关注）</div>' +
+      '<div id="warn-chart" style="height:260px"></div></div>' +
       '<div class="card"><div class="card-title">学业预警名单（出勤 + 作业自动研判）</div><div id="warn-body"></div></div>';
 
     api.get("/api/counselor/stat").then(function (d) {
@@ -66,6 +69,40 @@
           return "<tr><td>" + esc(w.student_no) + "</td><td><b>" + esc(w.name) + "</b></td><td>" + esc(w.class_name || "—") +
             "</td><td>" + rate + "</td><td>" + esc(w.absent_count) + " 次</td><td>" + reasons + "</td></tr>";
         }).join("") + "</tbody></table></div>";
+      drawWarnChart(list);
+    });
+  }
+
+  /** 预警学生出勤率条形图：低于 60% 红色、低于 80% 橙色、其余蓝色 */
+  function drawWarnChart(list) {
+    if (!window.echarts) return;
+    var el = $("warn-chart");
+    if (!el) return;
+    var chart = echarts.getInstanceByDom(el) || echarts.init(el);
+    var rows = list.slice(0, 12).reverse();
+    chart.setOption({
+      tooltip: {
+        trigger: "axis",
+        formatter: function (ps) {
+          var p = ps[0];
+          var w = rows[p.dataIndex] || {};
+          return esc(w.name || "") + "（" + esc(w.student_no || "") + "）出勤率 " +
+            (p.value === -1 ? "无记录" : p.value + "%") + " · 缺勤 " + esc(w.absent_count ?? "?") + " 次";
+        }
+      },
+      grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
+      xAxis: { type: "value", max: 100, axisLabel: { formatter: "{value}%" } },
+      yAxis: { type: "category", data: rows.map(function (w) { return w.name || w.student_no; }) },
+      series: [{
+        type: "bar",
+        data: rows.map(function (w) {
+          var v = w.attendance_rate === null || w.attendance_rate === undefined ? -1 : Math.round(w.attendance_rate * 100);
+          var color = v >= 80 ? "#3b6fe0" : v >= 60 ? "#f59e0b" : "#ef4444";
+          return { value: v, itemStyle: { color: color, borderRadius: [0, 4, 4, 0] } };
+        }),
+        barMaxWidth: 16,
+        label: { show: true, position: "right", formatter: function (p) { return p.value >= 0 ? p.value + "%" : "无记录"; } }
+      }]
     });
   }
 

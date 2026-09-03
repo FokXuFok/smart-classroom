@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 import config
 from app.api.deps import CurrentUser, get_db, require_roles
 from app.core import face_engine, fingerprint
+from app.core.events import checkin_bus
 from app.core.exception import BizError, ok
 from app.core.geofence import within_range
 from app.core.judge.service import judge_submission
@@ -242,17 +243,28 @@ def submit_checkin(
         raise BizError(2003, "未获取到定位信息，无法签到")
 
     # 6) 人脸检测与嵌入
-    eng = face_engine.get_engine()
-    embedding, _face = eng.embed_b64_best(req.image_b64)
-    if embedding is None:
-        logger.warning(
-            "签到被拒(未检出人脸) student=%s session=%s course=%s",
+    demo_mode = req.image_b64 == "demo"  # 演示模式：直接使用已注册模板，跳过照片比对
+    if demo_mode:
+        logger.info(
+            "签到(演示模式) student=%s session=%s course=%s",
             sno, session.id, session.course_id,
         )
-        raise BizError(400, "未检测到人脸，请正对摄像头重试")
+    else:
+        eng = face_engine.get_engine_or_raise()
+        embedding, _face = eng.embed_b64_best(req.image_b64)
+        if embedding is None:
+            logger.warning(
+                "签到被拒(未检出人脸) student=%s session=%s course=%s",
+                sno, session.id, session.course_id,
+            )
+            raise BizError(400, "未检测到人脸，请正对摄像头重试")
 
-    # 7) 相似度比对：不足则转人工复核
-    sim = eng.compare_with_template(bytes(student.face_template), embedding)
+    # 7) 相似度比对：不足则转人工复核（演示模式 sim=1.0 直接通过）
+    sim = (
+        1.0
+        if demo_mode
+        else eng.compare_with_template(bytes(student.face_template), embedding)
+    )
     if sim < config.FACE_SIM_THRESHOLD:
         db.add(
             AttendanceRecord(
@@ -274,24 +286,35 @@ def submit_checkin(
             "签到转人工复核(相似度不足) student=%s session=%s course=%s sim=%.3f 阈值=%.2f",
             sno, session.id, session.course_id, sim, config.FACE_SIM_THRESHOLD,
         )
+        # 实时大屏：通知教师端看板有待复核记录
+        checkin_bus.publish(
+            session.id,
+            {
+                "type": "review",
+                "student_no": sno,
+                "name": student.name,
+                "reason": f"相似度不足({sim:.2f})，待人工复核",
+            },
+        )
         raise BizError(2002, f"人脸相似度不足({sim:.2f})，已提交人工复核")
 
     # 8) 指纹核验（预留，不阻断）
     fp = fingerprint.verify(sno, req.fingerprint)
 
-    # 9) 两帧活体（可选）
-    if req.image_b64_2:
+    # 9) 两帧活体（可选；演示模式无真实照片，直接判通过）
+    if not demo_mode and req.image_b64_2:
         live = eng.liveness_two_frames(req.image_b64, req.image_b64_2)
         is_live = 1 if live.get("passed") else 0
     else:
-        live = {"passed": True, "note": "未采集第二帧"}
+        note = "演示模式" if demo_mode else "未采集第二帧"
+        live = {"passed": True, "note": note}
         is_live = 1
 
     # 10) 正常 / 迟到
     late_delta = datetime.timedelta(minutes=config.LATE_MINUTES)
     status = 1 if (now - session.create_time) <= late_delta else 2
 
-    # 11) 落库 + 保存自拍
+    # 11) 落库 + 保存自拍（演示模式无照片，不写文件）
     location = f"{req.lat},{req.lng}"
     rec = AttendanceRecord(
         course_id=session.course_id,
@@ -305,15 +328,16 @@ def submit_checkin(
         is_liveness_passed=is_live,
         session_id=session.id,
     )
-    try:
-        checkin_dir = config.UPLOAD_DIR / "checkin"
-        checkin_dir.mkdir(parents=True, exist_ok=True)
-        raw = _decode_b64_image(req.image_b64)
-        if raw:
-            (checkin_dir / f"{sno}_{session.id}.jpg").write_bytes(raw)
-            rec.student_image_url = f"/uploads/checkin/{sno}_{session.id}.jpg"
-    except Exception:
-        pass
+    if not demo_mode:
+        try:
+            checkin_dir = config.UPLOAD_DIR / "checkin"
+            checkin_dir.mkdir(parents=True, exist_ok=True)
+            raw = _decode_b64_image(req.image_b64)
+            if raw:
+                (checkin_dir / f"{sno}_{session.id}.jpg").write_bytes(raw)
+                rec.student_image_url = f"/uploads/checkin/{sno}_{session.id}.jpg"
+        except Exception:
+            pass
     db.add(rec)
     try:
         db.commit()
@@ -326,6 +350,19 @@ def submit_checkin(
         "签到成功 student=%s session=%s course=%s status=%s(%s) sim=%.3f 距离=%dm 活体=%s",
         sno, session.id, session.course_id, status, ATT_STATUS_CN.get(status),
         sim, round(dist), is_live,
+    )
+    # 实时大屏：把签到结果即时推给教师端看板
+    checkin_bus.publish(
+        session.id,
+        {
+            "type": "checkin",
+            "student_no": sno,
+            "name": student.name,
+            "status": status,
+            "status_cn": ATT_STATUS_CN.get(status),
+            "check_in_time": now.strftime("%H:%M:%S"),
+            "similarity": round(float(sim), 4),
+        },
     )
 
     return ok(
@@ -355,7 +392,7 @@ def face_register(
     if student.face_template and student.face_regen_allowed != 1:
         raise BizError(403, "人脸已注册，如需更换请联系教师授权")
 
-    eng = face_engine.get_engine()
+    eng = face_engine.get_engine_or_raise()
     embedding, _face = eng.embed_b64_best(req.image_b64)
     if embedding is None:
         raise BizError(400, "未检测到人脸，请正对摄像头重试")
@@ -462,6 +499,16 @@ def apply_checkin(
     db.add(rec)
     db.commit()
     db.refresh(rec)
+    # 实时大屏：请假/补签申请即时提醒教师
+    checkin_bus.publish(
+        session.id,
+        {
+            "type": "apply",
+            "student_no": sno,
+            "name": current.user.name,
+            "reason": req.reason or "请假/补签申请",
+        },
+    )
     return ok({"id": rec.id, "status": ATT_STATUS_CN[4]}, message="申请已提交，待教师审核")
 
 

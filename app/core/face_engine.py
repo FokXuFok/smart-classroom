@@ -6,6 +6,8 @@ import threading
 import cv2
 import numpy as np
 
+from app.core.exception import BizError
+
 _engine = None
 _lock = threading.Lock()
 
@@ -25,6 +27,21 @@ def get_engine():
                 app.prepare(ctx_id=0, det_size=(640, 640))
                 _engine = FaceEngine(app)
     return _engine
+
+
+def get_engine_or_raise():
+    """获取人脸引擎；组件缺失/加载失败时抛 6001 友好提示，避免裸 500。
+
+    insightface 未安装、onnx 模型缺失、或运行时初始化失败都会走到这里，
+    统一转成业务错误码 6001（AI 服务不可用），前端展示可理解的提示。
+    """
+    try:
+        return get_engine()
+    except Exception as exc:
+        raise BizError(
+            6001,
+            "人脸识别组件未就绪（insightface 未安装或模型缺失），请联系管理员",
+        ) from exc
 
 
 class FaceEngine:
@@ -79,19 +96,28 @@ class FaceEngine:
 
     @staticmethod
     def cosine(a: np.ndarray, b: np.ndarray) -> float:
-        """两向量余弦相似度"""
+        """两向量余弦相似度；维度不一致或含非有限值 → 0.0（防御坏模板不崩溃）"""
         a = np.asarray(a, dtype=np.float32).ravel()
         b = np.asarray(b, dtype=np.float32).ravel()
-        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-        if denom == 0.0:
+        if a.shape[0] != b.shape[0] or a.shape[0] == 0:
             return 0.0
-        return float(np.dot(a, b) / denom)
+        na = float(np.linalg.norm(a))
+        nb = float(np.linalg.norm(b))
+        if na == 0.0 or nb == 0.0 or not (np.isfinite(na) and np.isfinite(nb)):
+            return 0.0
+        return float(np.dot(a, b) / (na * nb))
 
     def compare_with_template(self, template_bytes: bytes, embedding: np.ndarray) -> float:
-        """旧库 blob(bytes, 512维 float32) 与当前 embedding 的余弦相似度"""
+        """旧库 blob(bytes, 512维 float32) 与当前 embedding 的余弦相似度
+
+        模板维度与 embedding 不一致（历史坏数据/旧模型遗留）时返回 0.0，
+        走"相似度不足 → 人工复核"路径，绝不抛出导致 500。
+        """
         if not template_bytes or embedding is None:
             return 0.0
         template = np.frombuffer(template_bytes, dtype=np.float32)
+        if template.shape[0] != embedding.shape[0]:
+            return 0.0
         return self.cosine(template, embedding)
 
     def embedding_to_bytes(self, embedding: np.ndarray) -> bytes:

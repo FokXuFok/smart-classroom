@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, get_db, require_roles
-from app.api.notification import push as push_notif
+from app.api.notification import push_many
 from app.core.exception import BizError, ok
 from app.models import ClassroomInteraction, Course, Enrollment, Student
 from app.schemas.common import InteractionCreateReq
@@ -156,23 +156,34 @@ def random_pick(
     )
     db.commit()
 
-    # ---- 站内消息：被点学生 + 同课其他学生（push 内部独立提交，不影响主流程）----
+    # ---- 站内消息：被点学生 + 同课其他学生（push_many 单事务批量写入）----
     course_name = course.course_name or course_id
-    push_notif(
-        db, picked.student_no, "student", "random_pick",
-        "随机点名",
-        f"你被点到名了！《{course_name}》课堂随机点名选中了你，请准备回答问题。",
-        course_id=course_id,
-    )
+    notif_items = [
+        (
+            picked.student_no,
+            "student",
+            "random_pick",
+            "随机点名",
+            f"你被点到名了！《{course_name}》课堂随机点名选中了你，请准备回答问题。",
+            None,
+            course_id,
+        )
+    ]
     for sno, _name in students:
         if sno == picked.student_no:
             continue
-        push_notif(
-            db, sno, "student", "random_pick",
-            "随机点名",
-            f"《{course_name}》本次随机点名结果：{picked.name}（{picked.student_no}）被点到。",
-            course_id=course_id,
+        notif_items.append(
+            (
+                sno,
+                "student",
+                "random_pick",
+                "随机点名",
+                f"《{course_name}》本次随机点名结果：{picked.name}（{picked.student_no}）被点到。",
+                None,
+                course_id,
+            )
         )
+    push_many(db, notif_items)
 
     return ok(
         {"student_no": picked.student_no, "name": picked.name}, message="点名完成"
@@ -216,31 +227,45 @@ def interaction_stats(
 ):
     _get_owned_course(db, course_id, current.user.teacher_no)
     today = datetime.date.today()
-    by_type = {}
-    by_student = {}
-    today_count = 0
-    total = 0
-    rows = (
-        db.query(ClassroomInteraction)
-        .filter(ClassroomInteraction.course_id == course_id)
+    cond = ClassroomInteraction.course_id == course_id
+
+    # SQL 聚合下推：不再全表拉取 Python 内存循环统计
+    total = db.query(func.count(ClassroomInteraction.id)).filter(cond).scalar()
+    by_type = dict(
+        db.query(
+            ClassroomInteraction.interaction_type, func.count(ClassroomInteraction.id)
+        )
+        .filter(cond)
+        .group_by(ClassroomInteraction.interaction_type)
         .all()
     )
-    for r in rows:
-        total += 1
-        by_type[r.interaction_type] = by_type.get(r.interaction_type, 0) + 1
-        if r.student_id:
-            by_student[r.student_id] = by_student.get(r.student_id, 0) + 1
-        if r.lesson_date == today:
-            today_count += 1
+    top_rows = (
+        db.query(
+            ClassroomInteraction.student_id,
+            func.count(ClassroomInteraction.id),
+        )
+        .filter(cond, ClassroomInteraction.student_id.isnot(None))
+        .group_by(ClassroomInteraction.student_id)
+        .order_by(
+            func.count(ClassroomInteraction.id).desc(),
+            ClassroomInteraction.student_id,
+        )
+        .limit(10)
+        .all()
+    )
+    today_count = (
+        db.query(func.count(ClassroomInteraction.id))
+        .filter(cond, ClassroomInteraction.lesson_date == today)
+        .scalar()
+    )
 
     names = {}
-    if by_student:
+    if top_rows:
         names = dict(
             db.query(Student.student_no, Student.name)
-            .filter(Student.student_no.in_(list(by_student.keys())))
+            .filter(Student.student_no.in_([sno for sno, _ in top_rows]))
             .all()
         )
-    top10 = sorted(by_student.items(), key=lambda kv: kv[1], reverse=True)[:10]
     enrolled = (
         db.query(func.count(Enrollment.id))
         .filter(Enrollment.course_id == course_id, Enrollment.status == 1)
@@ -249,17 +274,17 @@ def interaction_stats(
     return ok(
         {
             "course_id": course_id,
-            "total": total,
+            "total": total or 0,
             "enrolled_count": enrolled,
             "by_type": by_type,
-            "today_count": today_count,
+            "today_count": today_count or 0,
             "top_students": [
                 {
                     "student_id": sno,
                     "name": names.get(sno),
                     "count": cnt,
                 }
-                for sno, cnt in top10
+                for sno, cnt in top_rows
             ],
         }
     )

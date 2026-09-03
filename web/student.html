@@ -14,6 +14,37 @@
   pre.out { background:#f8fafd; border:1px solid var(--border); border-radius:var(--radius);
             padding:10px; font-size:12.5px; white-space:pre-wrap; }
   .ok{color:var(--ok)} .bad{color:var(--absent)}
+
+  /* ---------- 人脸签到取景框模态框 ---------- */
+  .cam-mask { position:fixed; inset:0; z-index:999; background:rgba(15,23,42,.72);
+              display:flex; align-items:center; justify-content:center; }
+  .cam-modal { background:var(--white); border-radius:16px; width:430px; max-width:94vw;
+               overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,.45); animation:camIn .18s ease-out; }
+  @keyframes camIn { from{transform:scale(.96);opacity:0} to{transform:scale(1);opacity:1} }
+  .cam-modal-head { display:flex; align-items:center; gap:8px; padding:14px 18px;
+                    border-bottom:1px solid var(--border); font-size:15px; font-weight:700; }
+  .cam-modal-head .sub { font-weight:400; font-size:12.5px; color:var(--text-sub); flex:1; }
+  .cam-modal-head button { border:none; background:none; font-size:20px; line-height:1;
+                           cursor:pointer; color:var(--text-sub); padding:2px 6px; }
+  .cam-box2 { position:relative; background:#0f172a; aspect-ratio:4/3; }
+  .cam-box2 video { width:100%; height:100%; object-fit:cover; display:block; transform:scaleX(-1); }
+  .cam-guide2 { position:absolute; left:50%; top:46%; transform:translate(-50%,-50%);
+                width:58%; height:64%; border:2px dashed rgba(255,255,255,.55); border-radius:50%;
+                box-shadow:inset 0 0 46px rgba(0,0,0,.5); pointer-events:none; }
+  .cam-guide2::before, .cam-guide2::after { content:""; position:absolute; left:50%; transform:translateX(-50%);
+                width:1.5px; background:rgba(255,255,255,.4); }
+  .cam-guide2::before { top:-14px; height:10px; }
+  .cam-guide2::after { bottom:-14px; height:10px; }
+  .cam-guide2 .glow { position:absolute; inset:-3px; border-radius:50%;
+                border:2px solid rgba(74,222,128,0); transition:border-color .2s; }
+  .cam-guide2 .glow.on { border-color:rgba(74,222,128,.9); }
+  .cam-tip2 { position:absolute; left:0; right:0; bottom:0; padding:10px 12px; text-align:center;
+              background:linear-gradient(transparent,rgba(0,0,0,.68)); color:#fff;
+              font-size:13.5px; line-height:1.6; }
+  .cam-tip2 .ok { color:#4ade80; }
+  .cam-tip2 .err { color:#fca5a5; }
+  .cam-modal-foot { display:flex; gap:10px; padding:14px 18px; }
+  .cam-modal-foot .btn { flex:1; }
 </style>
 </head>
 <body>
@@ -27,7 +58,7 @@
   var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
   var courseNames = {};
 
-  demo.initDemo("学生端").then(function () {
+  demo.initDemo("学生端", "student").then(function () {
     demo.checkinNotice(courseNames);   // 教师发起签到 → 顶部横幅
     demo.notifWatcher();               // 点名/作业/审核结果 → 右上角消息
 
@@ -73,14 +104,23 @@
   }
 
   /* ---------- 签到 ---------- */
+  var activeSessions = {};   // session_id(string) -> session（含教师坐标，用于定位回退）
+
   function renderCheckin(el) {
     el.innerHTML =
       '<div class="card" style="margin-bottom:16px"><div class="card-title">进行中签到</div>' +
       '<div id="ck-active"></div></div>' +
-      '<div class="card" style="margin-bottom:16px"><div class="card-title">发起演示签到</div>' +
-      '<div class="light" style="margin-bottom:10px">教师端发起签到后，学生端会收到顶部横幅提醒；此处可对进行中的签到做演示签到。</div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">人脸注册</div>' +
+      '<div class="light" style="margin-bottom:6px">真实人脸签到前需先注册人脸模板：点击「拍照注册」，' +
+      '系统提取你的面部特征并保存（换脸需教师端授权）。</div>' +
+      '<div class="row"><button class="btn btn-primary" id="ck-enroll">拍照注册人脸</button></div>' +
+      '<div id="ck-enroll-result" style="margin-top:8px"></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">人脸签到</div>' +
+      '<div class="light" style="margin-bottom:10px">点击「摄像头签到」打开取景框，对准人脸拍照完成签到' +
+      '（真实人脸比对 + 活体检测 + 定位围栏）。教师端发起签到后，学生端也会收到顶部横幅提醒。</div>' +
       '<div class="row"><select id="ck-sel" class="input" style="flex:1;min-width:200px"></select>' +
-      '<button class="btn btn-primary" id="ck-demo">演示签到（人脸+定位）</button></div>' +
+      '<button class="btn btn-primary" id="ck-cam">摄像头签到</button>' +
+      '<button class="btn btn-outline" id="ck-demo">演示签到（无需摄像头）</button></div>' +
       '<div id="ck-result"></div></div>' +
       '<div class="card"><div class="card-title">签到历史</div><div id="ck-history"></div></div>';
 
@@ -89,12 +129,14 @@
 
     function refreshActive() {
       api.get("/api/student/checkin/active").then(function (list) {
+        activeSessions = {};
         var box = $("ck-active"), sel = $("ck-sel");
         if (!list || !list.length) {
           box.innerHTML = '<div class="empty">暂无进行中的签到</div>';
           sel.innerHTML = '<option value="">暂无进行中的签到</option>';
           return;
         }
+        list.forEach(function (s) { activeSessions[String(s.id)] = s; });
         box.innerHTML = '<div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>剩余</th><th>围栏</th></tr></thead><tbody>' +
           list.map(function (s) {
             return "<tr><td>" + esc(courseNames[s.course_id] || s.course_id) + "</td><td>约 " +
@@ -120,25 +162,257 @@
       });
     }
 
-    $("ck-demo").addEventListener("click", async function () {
-      var sid = $("ck-sel").value;
-      var out = $("ck-result");
-      if (!sid) { out.innerHTML = '<div class="bad">请先选择进行中的签到会话</div>'; return; }
-      var btn = this; btn.disabled = true; btn.textContent = "提交中…";
-      out.innerHTML = '<div class="light">调用人脸识别接口进行演示签到…</div>';
+    // ---- 摄像头人脸签到（取景框模态框） ----
+    var cam = { video: null, stream: null, sid: null, lat: null, lng: null, done: false, busy: false };
+
+    function buildCamModal() {
+      var d = document.createElement("div");
+      d.className = "cam-mask"; d.id = "cam-mask"; d.style.display = "none";
+      d.innerHTML =
+        '<div class="cam-modal">' +
+        '<div class="cam-modal-head">人脸签到<span class="sub" id="cam-title"></span>' +
+        '<button id="cam-x" title="关闭">×</button></div>' +
+        '<div class="cam-box2"><video id="cam-video" autoplay playsinline muted></video>' +
+        '<div class="cam-guide2"><span class="glow" id="cam-glow"></span></div>' +
+        '<div class="cam-tip2" id="cam-tip">正在打开摄像头…</div></div>' +
+        '<div class="cam-modal-foot">' +
+        '<button class="btn btn-outline" id="cam-cancel">取消</button>' +
+        '<button class="btn btn-outline" id="cam-fb" disabled>改用演示签到</button>' +
+        '<button class="btn btn-primary" id="cam-snap" disabled>拍照签到</button></div>' +
+        '</div>';
+      document.body.appendChild(d);
+      $("cam-x").addEventListener("click", closeCamModal);
+      $("cam-cancel").addEventListener("click", closeCamModal);
+      $("cam-snap").addEventListener("click", doSnapSignin);
+      // 摄像头不可用/被拒/超时 → 关模型框后用演示签到兜底（组会演示稳）
+      $("cam-fb").addEventListener("click", function () {
+        var sid = cam.sid;
+        closeCamModal();
+        if (sid) doDemoSignin(sid);
+      });
+    }
+
+    function closeCamModal() {
+      if (cam.stream) { cam.stream.getTracks().forEach(function (t) { t.stop(); }); cam.stream = null; }
+      if (cam.video) { cam.video.srcObject = null; cam.video = null; }
+      cam.sid = null; cam.done = false; cam.busy = false;
+      $("cam-mask").style.display = "none";
+    }
+
+    function setTip(html, cls) {
+      $("cam-tip").innerHTML = '<span class="' + (cls || "") + '">' + html + "</span>";
+    }
+
+    async function openCamModal(sid, sess) {
+      if (!sess) { $("ck-result").innerHTML = '<div class="bad">签到会话信息缺失，请刷新重试</div>'; return; }
+      if (!$("cam-mask")) buildCamModal();
+      cam.sid = sid;
+      cam.lat = sess.teacher_lat; cam.lng = sess.teacher_lng;  // 回退坐标：教师发起坐标（围栏内）
+      cam.done = false; cam.busy = false;
+      $("cam-title").textContent = "· " + (courseNames[sess.course_id] || sess.course_id);
+      $("cam-mask").style.display = "flex";
+      var snap = $("cam-snap"), fb = $("cam-fb");
+      snap.disabled = true; fb.disabled = true; snap.textContent = "拍照签到";
+      setTip("正在打开摄像头，请允许摄像头权限…");
       try {
-        // 演示模式：用人脸库中已注册模板签到（teacher坐标保证在围栏内）
+        // 8 秒超时：权限弹窗被忽略/拦截时不让界面卡在"没反应"
+        var stream = await Promise.race([
+          navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+          }),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error("摄像头打开超时，请检查浏览器权限")); }, 8000); })
+        ]);
+        cam.stream = stream;
+        cam.video = $("cam-video");
+        cam.video.srcObject = stream;
+        // 等视频真正出画面再放行"拍照签到"，避免黑帧
+        await new Promise(function (res, rej) {
+          var t = setTimeout(function () { rej(new Error("摄像头画面未就绪")); }, 4000);
+          cam.video.oncanplay = function () { clearTimeout(t); res(); };
+          cam.video.play().catch(rej);
+        });
+        snap.disabled = false;
+        setTip("请将人脸对准<b>取景框</b>，保持光线充足，点击「拍照签到」");
+        // 尝试获取真实定位（高精度，10 秒超时；失败则提示用户）
+        try {
+          var pos = await new Promise(function (res, rej) {
+            navigator.geolocation.getCurrentPosition(res, rej,
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+          });
+          cam.lat = pos.coords.latitude; cam.lng = pos.coords.longitude;
+        } catch (e) {
+          setTip("⚠ 定位获取失败（" + (e && e.message || "未知") + "），签到可能因超出范围被拒。请检查浏览器定位权限或在手机端重试。");
+          cam.lat = null; cam.lng = null;
+        }
+      } catch (e) {
+        snap.disabled = true;
+        fb.disabled = false; // 提供"改用演示签到"兜底通道
+        setTip((e && e.message) || "无法访问摄像头，请检查浏览器权限后重试" +
+          "（也可点下方「改用演示签到」）", "err");
+      }
+    }
+
+    async function doSnapSignin() {
+      if (cam.done) { closeCamModal(); return; }        // 签到成功后按钮变为"完成"
+      if (cam.busy || !cam.sid) return;                 // 提交中/模态框已关闭 → 忽略
+      var v = cam.video;
+      if (!v || !v.videoWidth) { setTip("摄像头未就绪，请稍候重试", "err"); return; }
+      cam.busy = true;
+      var snap = $("cam-snap"); snap.disabled = true;
+      var canvas = document.createElement("canvas");
+      canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+      var ctx = canvas.getContext("2d");
+
+      // 第一帧
+      ctx.drawImage(v, 0, 0);
+      var f1 = canvas.toDataURL("image/jpeg", 0.85);
+      // 活体检测：间隔后采集第二帧（提示轻微动作）
+      setTip("已采集第一帧，请<b>轻轻晃动头部</b>…");
+      $("cam-glow").classList.add("on");
+      await new Promise(function (r) { setTimeout(r, 900); });
+      ctx.drawImage(v, 0, 0);
+      var f2 = canvas.toDataURL("image/jpeg", 0.85);
+      $("cam-glow").classList.remove("on");
+
+      setTip("正在提交签到…");
+      try {
         var d = await api.post("/api/student/checkin/submit", {
-          session_id: parseInt(sid, 10), image_b64: "demo", lat: 25.272, lng: 110.331
+          session_id: cam.sid, image_b64: f1, image_b64_2: f2, lat: cam.lat, lng: cam.lng
+        });
+        setTip("<b>" + esc(d.status_cn) + "</b> · 相似度 " + esc(d.similarity) + " · 距离 " + esc(d.distance_m) + " 米", "ok");
+        snap.textContent = "完成"; snap.disabled = false; cam.done = true;
+        refreshHistory();
+        refreshActive();
+      } catch (e) {
+        setTip(e.message || "签到失败，请重试", "err");
+        snap.disabled = false;
+      }
+      cam.busy = false;
+    }
+
+    $("ck-cam").addEventListener("click", function () {
+      var sid = $("ck-sel").value;
+      if (!sid) { $("ck-result").innerHTML = '<div class="bad">请先选择进行中的签到会话</div>'; return; }
+      openCamModal(parseInt(sid, 10), activeSessions[sid]);
+    });
+
+    // 演示签到（无需摄像头）：直接以已注册人脸模板签到，坐标取教师发起坐标（围栏内）
+    async function doDemoSignin(sid) {
+      var out = $("ck-result");
+      var sess = activeSessions[String(sid)];
+      var lat = sess ? sess.teacher_lat : 25.272;
+      var lng = sess ? sess.teacher_lng : 110.331;
+      try {
+        out.innerHTML = '<div class="light">演示签到：直接使用已注册人脸模板…</div>';
+        var d = await api.post("/api/student/checkin/submit", {
+          session_id: sid, image_b64: "demo", lat: lat, lng: lng
         });
         out.innerHTML = '<div class="ok"><b>' + esc(d.status_cn) + "</b> · 相似度 " + esc(d.similarity) +
-          " · 距离 " + esc(d.distance_m) + " 米</div>";
+          " · 距离 " + esc(d.distance_m) + " 米（演示模式）</div>";
         refreshHistory();
+        refreshActive();
       } catch (e) {
         out.innerHTML = '<div class="bad">' + esc(e.message || "签到失败") + "</div>";
       }
-      btn.disabled = false; btn.textContent = "演示签到（人脸+定位）";
+    }
+
+    $("ck-demo").addEventListener("click", function () {
+      var sid = $("ck-sel").value;
+      if (!sid) { $("ck-result").innerHTML = '<div class="bad">请先选择进行中的签到会话</div>'; return; }
+      var btn = this; btn.disabled = true; btn.textContent = "提交中…";
+      doDemoSignin(parseInt(sid, 10)).finally(function () {
+        btn.disabled = false; btn.textContent = "演示签到（无需摄像头）";
+      });
     });
+
+    // ---- 人脸注册（真实签到前提：拍照提取面部特征生成模板） ----
+    var enroll = { video: null, stream: null, busy: false };
+
+    function buildEnrollModal() {
+      var d = document.createElement("div");
+      d.className = "cam-mask"; d.id = "enroll-mask"; d.style.display = "none";
+      d.innerHTML =
+        '<div class="cam-modal">' +
+        '<div class="cam-modal-head">人脸注册<span class="sub">请正对镜头</span>' +
+        '<button id="enroll-x" title="关闭">×</button></div>' +
+        '<div class="cam-box2"><video id="enroll-video" autoplay playsinline muted></video>' +
+        '<div class="cam-guide2"><span class="glow" id="enroll-glow"></span></div>' +
+        '<div class="cam-tip2" id="enroll-tip">正在打开摄像头…</div></div>' +
+        '<div class="cam-modal-foot">' +
+        '<button class="btn btn-outline" id="enroll-cancel">取消</button>' +
+        '<button class="btn btn-primary" id="enroll-snap" disabled>拍照注册</button></div>' +
+        '</div>';
+      document.body.appendChild(d);
+      $("enroll-x").addEventListener("click", closeEnrollModal);
+      $("enroll-cancel").addEventListener("click", closeEnrollModal);
+      $("enroll-snap").addEventListener("click", doEnrollSnap);
+    }
+
+    function closeEnrollModal() {
+      if (enroll.stream) { enroll.stream.getTracks().forEach(function (t) { t.stop(); }); enroll.stream = null; }
+      if (enroll.video) { enroll.video.srcObject = null; enroll.video = null; }
+      enroll.busy = false;
+      var mask = $("enroll-mask"); if (mask) mask.style.display = "none";
+    }
+
+    async function openEnrollModal() {
+      if (!$("enroll-mask")) buildEnrollModal();
+      enroll.busy = false;
+      var mask = $("enroll-mask");
+      var snap = $("enroll-snap");
+      snap.disabled = true; snap.textContent = "拍照注册";
+      $("enroll-tip").innerHTML = '<span>正在打开摄像头，请允许摄像头权限…</span>';
+      mask.style.display = "flex";
+      try {
+        var stream = await Promise.race([
+          navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+          }),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error("摄像头打开超时，请检查浏览器权限")); }, 8000); })
+        ]);
+        enroll.stream = stream;
+        enroll.video = $("enroll-video");
+        enroll.video.srcObject = stream;
+        await new Promise(function (res, rej) {
+          var t = setTimeout(function () { rej(new Error("摄像头画面未就绪")); }, 4000);
+          enroll.video.oncanplay = function () { clearTimeout(t); res(); };
+          enroll.video.play().catch(rej);
+        });
+        snap.disabled = false;
+        $("enroll-tip").innerHTML = '<span>请将人脸对准<b>取景框</b>，保持光线充足，点击「拍照注册」</span>';
+      } catch (e) {
+        snap.disabled = true;
+        $("enroll-tip").innerHTML = '<span class="err">' + esc((e && e.message) || "无法访问摄像头，请检查浏览器权限") + "</span>";
+      }
+    }
+
+    async function doEnrollSnap() {
+      if (enroll.busy) return;
+      var v = enroll.video;
+      if (!v || !v.videoWidth) { $("enroll-tip").innerHTML = '<span class="err">摄像头未就绪，请稍候重试</span>'; return; }
+      enroll.busy = true;
+      var snap = $("enroll-snap"); snap.disabled = true;
+      var canvas = document.createElement("canvas");
+      canvas.width = v.videoWidth; canvas.height = v.videoHeight;
+      canvas.getContext("2d").drawImage(v, 0, 0);
+      var img = canvas.toDataURL("image/jpeg", 0.9);
+      $("enroll-tip").innerHTML = '<span>正在生成人脸模板…</span>';
+      var out = $("ck-enroll-result");
+      try {
+        var d = await api.post("/api/student/face/register", { image_b64: img });
+        out.innerHTML = '<div class="ok"><b>人脸注册成功</b> · 现在可使用「摄像头签到」进行真实人脸比对签到</div>';
+        closeEnrollModal();
+      } catch (e) {
+        out.innerHTML = '<div class="bad">' + esc(e.message || "注册失败") + "</div>";
+        $("enroll-tip").innerHTML = '<span class="err">注册失败，请重试</span>';
+        enroll.busy = false;
+        snap.disabled = false; snap.textContent = "拍照注册";
+      }
+    }
+
+    $("ck-enroll").addEventListener("click", openEnrollModal);
   }
 
   /* ---------- 作业 ---------- */

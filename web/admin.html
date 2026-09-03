@@ -32,7 +32,7 @@
   "use strict";
   var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
 
-  demo.initDemo("管理端").then(function () {
+  demo.initDemo("管理端", "admin").then(function () {
     demo.notifWatcher();
     var m = document.querySelector("main.content");
     demo.buildTabs(m, [

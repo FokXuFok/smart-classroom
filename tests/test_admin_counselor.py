@@ -659,15 +659,15 @@ def test_notification_flow(teacher_token, student_token):
 # ---------- 越权抽查 ----------
 
 def test_authz(student_token, counselor_token, teacher_token):
-    # 学生调管理端接口 → 403
+    # 学生调管理端接口 → 401（学生角色未登录，require_roles 精确认证）
     resp = client.get(
         "/api/admin/users",
         params={"role": "teacher"},
         cookies=student_token,
     )
-    assert resp.json()["code"] == 403
+    assert resp.json()["code"] == 401
 
-    # 辅导员调教师互动接口（CS103 属 T002）→ 403
+    # 辅导员调教师互动接口（CS103 属 T002）→ 401（辅导员角色无教师身份）
     resp = client.post(
         "/api/interaction/",
         json={
@@ -678,16 +678,16 @@ def test_authz(student_token, counselor_token, teacher_token):
         },
         cookies=counselor_token,
     )
-    assert resp.json()["code"] == 403
+    assert resp.json()["code"] == 401
 
-    # T001 操作 T002 的课程（CS103）→ 403
+    # T001 操作 T002 的课程（CS103）→ 403（同角色横向越权）
     resp = client.get(
         "/api/interaction/random-pick/CS103", cookies=teacher_token
     )
     assert resp.json()["code"] == 403
 
-    # 学生查辅导员预警 → 403
+    # 学生查辅导员预警 → 401（学生角色未登录辅导员身份）
     resp = client.get(
         "/api/counselor/warnings", cookies=student_token
     )
-    assert resp.json()["code"] == 403
+    assert resp.json()["code"] == 401

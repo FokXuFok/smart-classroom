@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
-"""教师端 API：发起/结束签到、签到看板、补签审核、人脸重注册授权、我的课程"""
+"""教师端 API：发起/结束签到、签到看板、实时推送（SSE）、考勤导出、
+补签审核、人脸重注册授权、我的课程"""
+import asyncio
 import datetime
+import json
+from io import BytesIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, get_db, require_roles
 from app.api.notification import push
 from app.core.exception import BizError, ok
+from app.core.events import checkin_bus
 from app.core.geofence import DEFAULT_COORD, haversine_m
 from app.models import (
     AttendanceRecord,
@@ -21,6 +28,7 @@ from app.schemas.checkin import ReviewReq, StartCheckinReq
 router = APIRouter(prefix="/api/teacher", tags=["teacher-checkin"])
 
 ATT_STATUS_CN = {0: "缺勤", 1: "正常", 2: "迟到", 3: "早退", 4: "请假"}
+REVIEW_STATUS_CN = {0: "无需审核", 1: "待审核", 2: "已审核"}
 
 
 def session_dict(s: CheckinSession) -> dict:
@@ -144,16 +152,16 @@ def end_checkin(
         .group_by(AttendanceRecord.status)
         .all()
     )
-    return ok(
-        {
-            "session_id": session_id,
-            "status": session.status,
-            "student_total": len(enrolled),
-            "absent_created": absent_created,
-            "stats": {ATT_STATUS_CN[k]: v for k, v in stats.items()},
-        },
-        message="签到已结束",
-    )
+    payload = {
+        "session_id": session_id,
+        "status": session.status,
+        "student_total": len(enrolled),
+        "absent_created": absent_created,
+        "stats": {ATT_STATUS_CN[k]: v for k, v in stats.items()},
+    }
+    # 实时大屏：通知教师端所有打开的看板，会话已结束
+    checkin_bus.publish(session_id, {"type": "session_end", **payload})
+    return ok(payload, message="签到已结束")
 
 
 # ---------- 会话历史（本人最近 50 条） ----------
@@ -193,18 +201,17 @@ def list_checkin_sessions(
 
 # ---------- 签到看板 ----------
 
-@router.get("/checkin/dashboard/{session_id}")
-def dashboard(
-    session_id: int,
-    current: CurrentUser = Depends(require_roles("teacher")),
-    db=Depends(get_db),
-):
+def _get_owned_session(db, session_id: int, teacher_no: str) -> CheckinSession:
     session = db.query(CheckinSession).filter(CheckinSession.id == session_id).first()
     if session is None:
         raise BizError(404, "签到会话不存在")
-    if session.teacher_id != current.user.teacher_no:
+    if session.teacher_id != teacher_no:
         raise BizError(403, "无权限查看该会话")
+    return session
 
+
+def _dashboard_rows(db, session: CheckinSession) -> list:
+    """选课名单 + 考勤记录左连接 → 看板行（看板页与 Excel 导出共用）"""
     rows = (
         db.query(Student, AttendanceRecord)
         .join(
@@ -252,8 +259,132 @@ def dashboard(
                 "review_status": rec.review_status if rec else None,
             }
         )
+    return students
 
-    return ok({"session": session_dict(session), "students": students})
+
+@router.get("/checkin/dashboard/{session_id}")
+def dashboard(
+    session_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    session = _get_owned_session(db, session_id, current.user.teacher_no)
+    return ok({"session": session_dict(session), "students": _dashboard_rows(db, session)})
+
+
+# ---------- 考勤导出 Excel ----------
+
+@router.get("/checkin/{session_id}/export")
+def export_attendance(
+    session_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """单次签到会话考勤表导出 .xlsx（浏览器同源 cookie 下载）"""
+    session = _get_owned_session(db, session_id, current.user.teacher_no)
+    rows = _dashboard_rows(db, session)
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "考勤"
+    ws.append(["学号", "姓名", "状态", "签到时间", "相似度", "定位", "距签到点(米)", "审核状态", "备注"])
+    for r in rows:
+        ws.append([
+            r["student_no"],
+            r["name"],
+            r["status"],
+            str(r["check_in_time"] or ""),
+            r["similarity1"] if r["similarity1"] is not None else "",
+            r["location"] or "",
+            r["distance_hint"] if r["distance_hint"] is not None else "",
+            REVIEW_STATUS_CN.get(r["review_status"], "") if r["review_status"] is not None else "",
+            r["review_remark"] or "",
+        ])
+    # 签到时间/相似度列宽微调，便于直接打印
+    for col, width in zip("ABCDEFGHI", (14, 10, 8, 20, 9, 22, 13, 9, 26)):
+        ws.column_dimensions[col].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    date_str = (session.end_time or session.create_time).strftime("%Y%m%d_%H%M")
+    filename = quote(f"考勤_{session.course_id}_{date_str}.xlsx")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
+
+
+# ---------- 签到实时推送（SSE） ----------
+
+def _session_stats(db, session: CheckinSession) -> dict:
+    """会话出勤统计（快照 / 结束事件共用）"""
+    stats = dict(
+        db.query(AttendanceRecord.status, func.count(AttendanceRecord.id))
+        .filter(AttendanceRecord.session_id == session.id)
+        .group_by(AttendanceRecord.status)
+        .all()
+    )
+    enrolled_total = (
+        db.query(func.count(Enrollment.id))
+        .filter(
+            Enrollment.course_id == session.course_id, Enrollment.status == 1
+        )
+        .scalar()
+    )
+    review_pending = (
+        db.query(func.count(AttendanceRecord.id))
+        .filter(
+            AttendanceRecord.session_id == session.id,
+            AttendanceRecord.review_status == 1,
+        )
+        .scalar()
+    )
+    return {
+        "enrolled": enrolled_total or 0,
+        "review_pending": review_pending or 0,
+        "stats": {ATT_STATUS_CN.get(k, str(k)): v for k, v in stats.items()},
+    }
+
+
+@router.get("/checkin/{session_id}/stream")
+async def checkin_stream(
+    session_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """SSE 实时签到大屏：学生签到/待复核/会话结束事件即时推送
+
+    首帧 snapshot 携带当前统计；之后每 25 秒发 keepalive 注释行防止代理断连。
+    快照在生成器外计算：流式期间不触碰请求级 db 会话（依赖回收时序安全）。
+    """
+    session = _get_owned_session(db, session_id, current.user.teacher_no)
+    snapshot = {"type": "snapshot", "session_status": session.status, **_session_stats(db, session)}
+
+    async def gen():
+        q = checkin_bus.subscribe(session_id)
+        try:
+            yield f"event: snapshot\ndata: {json.dumps(snapshot, ensure_ascii=False, default=str)}\n\n"
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=25)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                if event.get("type") == "session_end":
+                    break
+        finally:
+            checkin_bus.unsubscribe(session_id, q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------- 补签/请假审核 ----------
@@ -283,6 +414,17 @@ def review_attendance(
     rec.review_remark = req.remark
     db.commit()
     db.refresh(rec)
+    # 实时大屏：审核结果即时同步到打开的看板
+    checkin_bus.publish(
+        rec.session_id,
+        {
+            "type": "review_done",
+            "record_id": rec.id,
+            "student_id": rec.student_id,
+            "status_cn": ATT_STATUS_CN.get(rec.status, str(rec.status)),
+            "remark": req.remark or "",
+        },
+    )
     # 通知钩子：签到审核结果通知学生（push 内部自带异常兜底）
     push(
         db,

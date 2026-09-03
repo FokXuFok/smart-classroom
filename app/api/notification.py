@@ -55,6 +55,46 @@ def push(
         db.rollback()
 
 
+def push_many(db, items: list) -> int:
+    """批量写通知（一次提交）：全班推送场景避免逐条 commit 的事务开销。
+
+    items 元素为 push 同位置的参数元组：
+    (user_no, user_type, notif_type, title, content, related_id, course_id)
+    后三项可省略（默认 None）。非数字编号自动跳过；整体异常回滚返回 0。
+    """
+    objs = []
+    for it in items:
+        try:
+            uid = int(it[0])
+        except (TypeError, ValueError):
+            continue
+        try:
+            related_id, course_id = it[5], it[6]
+        except IndexError:
+            related_id, course_id = None, None
+        objs.append(
+            Notification(
+                user_id=uid,
+                user_type=it[1],
+                notif_type=it[2],
+                title=(it[3] or "")[:200],
+                content=it[4],
+                related_id=related_id,
+                course_id=course_id,
+                is_read=0,
+            )
+        )
+    if not objs:
+        return 0
+    try:
+        db.add_all(objs)
+        db.commit()
+    except Exception:
+        db.rollback()
+        return 0
+    return len(objs)
+
+
 def _my_uid(current: CurrentUser):
     """当前用户编号 → bigint；非数字返回 None（不可能有通知）"""
     pk = ROLE_PK.get(current.role)

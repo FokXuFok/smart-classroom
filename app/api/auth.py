@@ -87,12 +87,15 @@ def login(req: LoginReq, request: Request, response: Response, db=Depends(get_db
 
     token = create_token(username, role, user.name, config.INSTANCE_ID)
 
-    # token 写入 httpOnly 会话 cookie（统一命名 sc_token，登录新账号直接覆盖）
-    # 不设 max_age → 浏览器关闭即删除
+    # token 写入按角色命名的 httpOnly 会话 cookie（sc_token_{role}）。
+    # 不同角色 cookie 互相独立 → 同一浏览器可同时登录学生/教师等多个角色，
+    # 各角色页面刷新互不影响；不设 max_age → 浏览器关闭即删除。
     response.set_cookie(
-        "sc_token", token,
+        f"sc_token_{role}", token,
         path="/", samesite="lax", httponly=True,
     )
+    # 清理旧版统一 sc_token cookie，避免历史残留被新逻辑误读
+    response.delete_cookie("sc_token", path="/")
 
     return ok(
         {"role": role, "name": user.name, "user_id": username}
@@ -101,14 +104,13 @@ def login(req: LoginReq, request: Request, response: Response, db=Depends(get_db
 
 @router.post("/logout")
 def logout(current: CurrentUser = Depends(get_current_user), response: Response = None):
-    """退出登录：吊销当前 token + 删除 cookie"""
+    """退出登录：吊销当前 token + 删除当前角色 cookie（不影响其他已登录角色）"""
     # token 加入黑名单：即使 cookie 被浏览器恢复，旧 token 也无法使用
     revoke_token(current.jti, current.exp)
     if response:
+        response.delete_cookie(f"sc_token_{current.role}", path="/")
+        # 清理旧版统一 cookie 与其它角色 cookie（登出时不清理其他角色，保留其在线态）
         response.delete_cookie("sc_token", path="/")
-        # 清理旧版按角色命名遗留的 cookie（sc_token_*），避免历史残留干扰
-        for role in ("student", "teacher", "counselor", "admin"):
-            response.delete_cookie(f"sc_token_{role}", path="/")
     return ok()
 
 

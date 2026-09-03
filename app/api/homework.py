@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""教师端作业 API：作业 CRUD、提交列表、成绩簿、查重、重评、反馈开放"""
+"""教师端作业 API：作业 CRUD、提交列表、成绩簿、Excel 导出、查重、重评、反馈开放"""
+from io import BytesIO
+from urllib.parse import quote
+
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, get_db, require_roles
-from app.api.notification import push
+from app.api.notification import push_many
 from app.core.exception import BizError, ok
 from app.core.judge.service import check_homework_similarity, judge_submission
 from app.models import (
@@ -99,27 +103,35 @@ def create_homework(
     db.refresh(hw)
     _rebuild_cases(db, hw.id, req.test_cases)
     db.commit()
-    # 通知钩子：给选课学生发作业发布通知（push 内部自带异常兜底）
-    for (sno,) in (
-        db.query(Student.student_no)
-        .join(
-            Enrollment,
-            (Enrollment.student_id == Student.student_no)
-            & (Enrollment.course_id == req.course_id)
-            & (Enrollment.status == 1),
+    # 通知钩子：给选课学生批量发作业发布通知（push_many 单事务写入）
+    enrolled_nos = [
+        sno
+        for (sno,) in (
+            db.query(Student.student_no)
+            .join(
+                Enrollment,
+                (Enrollment.student_id == Student.student_no)
+                & (Enrollment.course_id == req.course_id)
+                & (Enrollment.status == 1),
+            )
+            .all()
         )
-        .all()
-    ):
-        push(
-            db,
-            sno,
-            "student",
-            "homework_publish",
-            f"新作业：{hw.title}",
-            f"《{course.course_name}》发布了新作业「{hw.title}」，请及时完成。",
-            related_id=hw.id,
-            course_id=hw.course_id,
-        )
+    ]
+    push_many(
+        db,
+        [
+            (
+                sno,
+                "student",
+                "homework_publish",
+                f"新作业：{hw.title}",
+                f"《{course.course_name}》发布了新作业「{hw.title}」，请及时完成。",
+                hw.id,
+                hw.course_id,
+            )
+            for sno in enrolled_nos
+        ],
+    )
     return ok({"homework_id": hw.id}, message="作业创建成功")
 
 
@@ -288,13 +300,8 @@ def homework_submissions(
     return ok(data)
 
 
-@router.get("/{homework_id}/gradebook")
-def homework_gradebook(
-    homework_id: int,
-    current: CurrentUser = Depends(require_roles("teacher")),
-    db=Depends(get_db),
-):
-    hw = _get_owned_homework(db, homework_id, current.user.teacher_no)
+def _gradebook_rows(db, hw: Homework) -> list:
+    """成绩册行（成绩册页与 Excel 导出共用）"""
     rows = (
         db.query(GradeBook, Student)
         .outerjoin(
@@ -308,7 +315,7 @@ def homework_gradebook(
         .order_by(Student.student_no)
         .all()
     )
-    data = [
+    return [
         {
             "student_id": gb.student_id,
             "student_name": st.name if st else None,
@@ -318,7 +325,58 @@ def homework_gradebook(
         }
         for gb, st in rows
     ]
-    return ok(data)
+
+
+@router.get("/{homework_id}/gradebook")
+def homework_gradebook(
+    homework_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    hw = _get_owned_homework(db, homework_id, current.user.teacher_no)
+    rows = _gradebook_rows(db, hw)
+    return ok(rows)
+
+
+# ---------- 成绩册导出 Excel ----------
+
+@router.get("/{homework_id}/gradebook/export")
+def gradebook_export(
+    homework_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """作业成绩册导出 .xlsx（浏览器同源 cookie 下载）"""
+    hw = _get_owned_homework(db, homework_id, current.user.teacher_no)
+    rows = _gradebook_rows(db, hw)
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "成绩册"
+    ws.append(["学号", "姓名", "成绩", "提交次数", "最近评测时间", "满分"])
+    for r in rows:
+        ws.append([
+            r["student_id"],
+            r["student_name"] or "",
+            float(r["score"]) if r["score"] is not None else "",
+            r["submit_count"],
+            str(r["judge_time"] or ""),
+            hw.max_score,
+        ])
+    for col, width in zip("ABCDEF", (14, 10, 8, 10, 20, 8)):
+        ws.column_dimensions[col].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = quote(f"成绩册_{hw.course_id}_{hw.title}.xlsx")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 # ---------- 查重 / 重评 / 开放反馈 ----------

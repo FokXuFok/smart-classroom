@@ -328,3 +328,35 @@ def test_t10b_face_register_unauthorized_existing(monkeypatch, temp_template, st
         cookies=student_token,
     )
     assert resp.json()["code"] == 403
+
+
+# ---------- t11 演示模式签到：image_b64="demo" 直接通过，无需人脸引擎 ----------
+
+def test_t11_demo_mode_submit(teacher_token, student_token, temp_template):
+    """demo 模式不调用人脸引擎、不走照片比对，sim=1.0 直接通过"""
+    sid = start_session(teacher_token)["id"]
+    # 不 monkeypatch 人脸引擎：证明演示模式根本不触发真实检测
+    resp = submit(student_token, sid, image_b64="demo")
+    body = resp.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    assert data["similarity"] == pytest.approx(1.0, abs=1e-6)
+    assert data["liveness"]["passed"] is True
+    # 演示模式无真实照片 → 不写自拍文件/URL
+    assert data.get("photo_url") is None or data.get("photo_url") == ""
+
+    db = SessionLocal()
+    rec = (
+        db.query(AttendanceRecord)
+        .filter_by(session_id=sid, student_id=STUDENT)
+        .first()
+    )
+    db.close()
+    assert rec is not None
+    assert rec.review_status == 0          # 未转入工复核
+    assert rec.similarity1 == pytest.approx(1.0, abs=1e-4)
+    assert rec.student_image_url is None   # 演示模式不留照片
+
+    # 演示模式重复提交 → 2005（与真实提交同路径去重）
+    resp2 = submit(student_token, sid, image_b64="demo")
+    assert resp2.json()["code"] == 2005

@@ -21,10 +21,14 @@
   }
 
   /**
-   * initDemo(pageTitle) → Promise<user>
-   * 验证登录（401 跳登录页），渲染顶部演示栏
+   * initDemo(pageTitle, role) → Promise<user>
+   * 验证登录（401 跳登录页），渲染顶部演示栏。
+   * role：当前页面所属角色（student/teacher/...）。不同角色使用独立
+   * httpOnly cookie，同一浏览器可同时登录学生端与教师端；本页面只认
+   * 本角色 cookie，角色未登录则回登录页，不会"串号"到其他角色。
    */
-  function initDemo(pageTitle) {
+  function initDemo(pageTitle, role) {
+    api.setRole(role);
     return api.get("/api/auth/me", { silent: true }).then(function (user) {
       var bar = document.createElement("header");
       bar.style.cssText = "height:56px;background:var(--blue-grad);color:#fff;" +

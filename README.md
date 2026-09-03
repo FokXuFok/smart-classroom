@@ -4,6 +4,8 @@
 
 对应申报书说明：原"三重核验"调整为 **人脸识别（InsightFace）+ 定位围栏（200 米）+ 指纹核验（接口预留）** 的双重实人核验 + 指纹扩展位方案。
 
+特色能力：**SSE 实时签到大屏**（学生签到即时推送教师看板，无需刷新）、**ECharts 可视化**（签到趋势/互动统计/预警学生出勤率图表）、**Excel 一键导出**（单次考勤表 + 作业成绩册 .xlsx）。
+
 ## 快速开始
 
 ```bash
@@ -36,8 +38,8 @@ python main.py --seed
 ## 目录结构
 
 ```
-├── main.py                  # 一键启动（依赖检查→DB检查→增量建表→可选种子→uvicorn）
-├── config.py                # 全局配置（从 .env 读取 DB_URL/JWT/AI Key；签到阈值等）
+├── main.py                  # 一键启动（依赖检查→DB检查→增量建表→可选种子→模型预热→uvicorn）
+├── config.py                # 全局配置（从 .env 读取 DB_URL/JWT/AI Key/CORS；签到阈值等）
 ├── .env.example             # 环境变量模板（复制为 .env 填真实值，.env 不入库）
 ├── requirements.txt
 ├── app/
@@ -46,6 +48,7 @@ python main.py --seed
 │   ├── core/
 │   │   ├── face_engine.py   # InsightFace 人脸引擎（嵌入/比对/两帧活体）
 │   │   ├── geofence.py      # Haversine 定位围栏
+│   │   ├── events.py        # SessionBus 事件总线（SSE 实时推送）
 │   │   ├── fingerprint.py   # 指纹核验（预留）
 │   │   ├── ai_client.py     # 阿里百炼（OpenAI 兼容）AI 客户端
 │   │   ├── security.py      # bcrypt + JWT
@@ -55,17 +58,19 @@ python main.py --seed
 ├── scripts/
 │   ├── init_db.py           # 数据库增量升级（幂等，只补不删）
 │   └── seed_demo.py         # 演示种子数据（幂等）
-├── web/                     # 四端静态前端（index/student/teacher/counselor/admin）
+├── web/                     # 四端静态前端（index/student/teacher/counselor/admin + echarts）
 ├── uploads/                 # 签到自拍/人脸照片等上传文件（/uploads 鉴权访问）
 ├── logs/                    # 运行日志（按天滚动，保留 14 天；不入库）
-└── tests/                   # pytest（104 用例）
+└── tests/                   # pytest（116 用例）
 ```
 
 ## 技术栈 / 架构
 
-- **单体架构**：FastAPI + Uvicorn 单进程；MySQL（SQLAlchemy ORM）；前端为原生 HTML/JS 静态页，由 FastAPI StaticFiles 直接托管。
+- **单体架构**：FastAPI + Uvicorn 单进程；MySQL（SQLAlchemy ORM）；前端为原生 HTML/JS 静态页 + ECharts（本地内置，离线可用），由 FastAPI StaticFiles 直接托管。
+- **人脸模型预热**：启动器后台线程预加载 InsightFace buffalo_l，首次人脸签到无需现场等待模型加载。
 - **签到核心**：InsightFace（buffalo_l，ONNXRuntime）512 维人脸嵌入余弦比对（阈值 0.40）+ Haversine 200 米定位围栏 + 相似度不足转人工复核；指纹核验接口预留不阻断。
-- **作业评测**：本地沙箱子进程运行（Python 开箱即用，C/Java 需系统编译器），按用例权重计分，成绩册取历史最高分；阿里百炼 AI 生成 markdown 批改反馈，AI 不可用自动降级为规则反馈；3-gram Jaccard 代码查重。
+- **实时推送**：教师签到看板走 SSE（`/api/teacher/checkin/{id}/stream`），学生签到/待复核/审核结果/会话结束事件即时上屏；进程内 SessionBus 总线，生产可换 Redis Pub/Sub。
+- **作业评测**：本地沙箱子进程运行（Python 开箱即用，C/Java 需系统编译器），按用例权重计分，成绩册取历史最高分；阿里百炼 AI 生成 markdown 批改反馈，AI 不可用自动降级为规则反馈；3-gram Jaccard 代码查重；考勤/成绩册可导出 .xlsx（openpyxl）。
 - **AI**：阿里百炼 OpenAI 兼容接口（deepseek-v4-pro-0813），Key 从 `.env` 的 `DASHSCOPE_API_KEY` 读取。
 - **日志**：结构化日志（含 8 位请求 ID，贯穿签到/评测/AI 链路），控制台 + `logs/app.log` 按天滚动保留 14 天；每个 API 响应头带 `X-Request-ID`，演示出问题时可按 ID 精确定位。
 
@@ -84,7 +89,7 @@ python main.py --seed
 python -m pytest tests/ -q
 ```
 
-当前 109 个用例全部通过（登录自动判身份、统一 cookie 串号回归、注册/审批、签到鉴权、人脸引擎、围栏、作业评测、预警、管理端等）。
+当前 116 个用例全部通过（登录自动判身份、统一 cookie 串号回归、注册/审批、签到鉴权、人脸引擎、围栏、作业评测、预警、管理端、SSE 实时流、Excel 导出、批量通知、SQL 聚合统计等）。
 
 ## 安全注意
 
@@ -94,4 +99,4 @@ python -m pytest tests/ -q
 - JWT 登出已失效：token 带 `jti`，登出即加入内存黑名单（服务重启黑名单清空，但 `instance_id` 同步变更，旧 token 依然全部失效）。黑名单为单进程内存版，多进程/多实例部署需换 Redis；
 - `/uploads` 已改为鉴权接口（`app/api/files.py`）：未登录 401，路径越界 404，登录后同路径可直接访问（前端与库中 URL 零改动）；
 - 评测沙箱为本地子进程隔离（黑名单防护），生产必须切换预留的 Docker Runner（`--network=none` 强隔离）；
-- CORS 当前 `allow_origins=["*"]`，生产需配置真实域名白名单并启用 HTTPS。
+- CORS 已支持 `.env` 白名单配置（`CORS_ORIGINS`，逗号分隔），默认 `*` 仅限本机演示；生产需配置真实域名并启用 HTTPS。

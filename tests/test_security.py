@@ -104,13 +104,15 @@ def test_login_success():
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
-    # token 现经 httpOnly cookie 下发（统一命名 sc_token），响应体不再含 token 字段
-    cookie = resp.cookies.get("sc_token")
-    assert cookie, "登录响应未下发 sc_token cookie"
+    # token 经按角色命名的 httpOnly cookie 下发（sc_token_student），响应体不含 token
+    cookie = resp.cookies.get("sc_token_student")
+    assert cookie, "登录响应未下发 sc_token_student cookie"
     assert body["data"]["role"] == "student"
     assert body["data"]["user_id"] == USERNAME
 
-    me = client.get("/api/auth/me", cookies={"sc_token": cookie})
+    me = client.get("/api/auth/me",
+                    cookies={"sc_token_student": cookie},
+                    headers={"X-Role": "student"})
     me_body = me.json()
     assert me_body["code"] == 0
     assert me_body["data"]["name"] == "张三"
@@ -133,21 +135,44 @@ def test_login_auto_detect_role():
         assert body["data"]["role"] == role, f"{username} 身份判断错误"
 
 
-def test_login_unified_cookie_no_cross_account():
-    """串号根因回归：登录 A 后再登录 B，cookie 统一为 sc_token 并被覆盖，
-    绝不会残留多个角色 cookie 导致取错身份"""
+def test_multi_role_cookies_coexist():
+    """多角色同时登录回归：登录学生后再登录教师，两者 cookie 并存互不覆盖。
+
+    学生标签持 sc_token_student、教师标签持 sc_token_teacher，刷新各自页面
+    身份不变；任一角色 cookie 调用 /me 都返回其自身身份，不串号。
+    """
     c = TestClient(app)
-    # 先登录学生，再登录教师 → 同一 cookie 名被覆盖
+    # 先登录学生
     c.post("/api/auth/login", json={"username": USERNAME, "password": "123456"})
-    first = c.cookies.get("sc_token")
-    assert first
+    stu_token = c.cookies.get("sc_token_student")
+    assert stu_token
+    # 再登录教师 → 不覆盖学生 cookie，新增教师 cookie
     c.post("/api/auth/login", json={"username": "T001", "password": "123456"})
-    assert c.cookies.get("sc_token") != first
-    # 当前身份必须是教师（而非最开始的账号）
-    me = c.get("/api/auth/me").json()
-    assert me["code"] == 0
-    assert me["data"]["user_id"] == "T001"
-    assert me["data"]["role"] == "teacher"
+    tea_token = c.cookies.get("sc_token_teacher")
+    assert tea_token
+    assert c.cookies.get("sc_token_student") == stu_token  # 学生 cookie 仍在
+
+    # 学生 cookie 调 /me → 学生身份（不受教师登录影响）
+    me_stu = c.get("/api/auth/me",
+                   cookies={"sc_token_student": stu_token},
+                   headers={"X-Role": "student"}).json()
+    assert me_stu["code"] == 0
+    assert me_stu["data"]["user_id"] == USERNAME
+    assert me_stu["data"]["role"] == "student"
+
+    # 教师 cookie 调 /me → 教师身份
+    me_tea = c.get("/api/auth/me",
+                   cookies={"sc_token_teacher": tea_token},
+                   headers={"X-Role": "teacher"}).json()
+    assert me_tea["code"] == 0
+    assert me_tea["data"]["user_id"] == "T001"
+    assert me_tea["data"]["role"] == "teacher"
+
+    # X-Role 头精确路由：同一浏览器持双 cookie，请求头声明 student → 解析出学生
+    me_stu2 = c.get("/api/auth/me", headers={"X-Role": "student"}).json()
+    assert me_stu2["code"] == 0 and me_stu2["data"]["role"] == "student"
+    me_tea2 = c.get("/api/auth/me", headers={"X-Role": "teacher"}).json()
+    assert me_tea2["code"] == 0 and me_tea2["data"]["role"] == "teacher"
 
 
 # ---------- 注册 → 管理员审批 → 登录 ----------
@@ -223,7 +248,7 @@ def test_admin_approve_registered_user(cleanup_reg_users):
     admin = TestClient(app)
     resp = admin.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
     assert resp.json()["code"] == 0, resp.json()
-    admin_cookies = {"sc_token": resp.cookies.get("sc_token")}
+    admin_cookies = {"sc_token_admin": resp.cookies.get("sc_token_admin")}
 
     resp = client.get(
         "/api/admin/users", params={"role": "student", "keyword": "R2026001"},
@@ -289,7 +314,7 @@ def test_logout_revokes_token():
     assert c.post("/api/auth/logout").json()["code"] == 0
     # 旧 token（即使 cookie 被恢复）已入黑名单 → 401
     resp = client.get(
-        "/api/auth/me", cookies={"sc_token": c.cookies.get("sc_token")}
+        "/api/auth/me", cookies={"sc_token_student": c.cookies.get("sc_token_student")}
     )
     assert resp.json()["code"] == 401
 
@@ -332,10 +357,11 @@ def test_uploads_serve_after_login(upload_file):
     cookies = TestClient(app).post(
         "/api/auth/login",
         json={"username": USERNAME, "password": "123456"},
-    ).cookies.get("sc_token")
+    ).cookies.get("sc_token_student")
     resp = client.get(
         "/uploads/face/test_upload_auth.jpg",
-        cookies={"sc_token": cookies},
+        cookies={"sc_token_student": cookies},
+        headers={"X-Role": "student"},
     )
     assert resp.status_code == 200
     assert resp.content == b"fake-image-bytes"

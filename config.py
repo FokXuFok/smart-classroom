@@ -37,6 +37,11 @@ DB_URL = os.environ.get("DB_URL", "mysql+pymysql://root:CHANGE_ME@localhost:3306
 SECRET_KEY = os.environ.get("SECRET_KEY", "CHANGE_ME-please-set-in-.env")
 TOKEN_EXPIRE_HOURS = 12
 
+# CORS 允许来源：逗号分隔；演示默认 *（仅本机），生产改真实域名白名单
+CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()
+]
+
 # 签到核心参数
 FACE_SIM_THRESHOLD = 0.40      # InsightFace 余弦相似度阈值
 GEOFENCE_DEFAULT_M = 200       # 默认签到范围（米）

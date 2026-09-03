@@ -38,6 +38,12 @@
 
 <div class="bar">
   <h1>API 测试台</h1>
+  <select id="role-select" style="padding:6px 10px;border:1px solid #d9dce1;border-radius:6px;font-size:13px">
+    <option value="student">学生端</option>
+    <option value="teacher">教师端</option>
+    <option value="counselor">辅导员端</option>
+    <option value="admin">管理端</option>
+  </select>
   <a class="back" id="back" href="index.html">← 返回登录页</a>
   <span class="user" id="user">加载中…</span>
   <button id="logout">退出登录</button>
@@ -109,7 +115,16 @@
     out.textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
   }
 
+  // 角色选择：切换测试身份（多角色并存时决定 /me 与请求走哪个角色的 cookie）
+  var roleSelect = document.getElementById("role-select");
+  function applyRole() {
+    api.setRole(roleSelect.value);
+    location.reload();
+  }
+  roleSelect.addEventListener("change", applyRole);
+
   // 登录验证 + 渲染预置按钮
+  api.setRole(roleSelect.value);
   api.get("/api/auth/me", { silent: true }).then(function (u) {
     document.getElementById("user").textContent =
       (ROLE_CN[u.role] || u.role) + " · " + u.name + "（" + u.user_id + "）";

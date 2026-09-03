@@ -122,10 +122,10 @@ def test_checkin_sessions_history(t001_token):
         assert resp.json()["code"] == 0
         assert all(r["id"] != sid for r in resp.json()["data"])
 
-        # 越权：学生 cookie 访问 → 403
+        # 越权：学生 cookie 访问 → 401（学生角色未登录教师身份）
         st_cookies = login_cookies("2024001", "123456", "student")
         resp = client.get("/api/teacher/checkin/sessions", cookies=st_cookies)
-        assert resp.json()["code"] == 403
+        assert resp.json()["code"] == 401
 
         # 结束后列表 status=0
         resp = client.post(f"/api/teacher/checkin/{sid}/end", cookies=t001_token)
@@ -149,3 +149,34 @@ def test_checkin_sessions_history(t001_token):
         )
         db.commit()
         db.close()
+
+
+def test_cross_role_endpoint_denied():
+    """跨角色隔离：不同角色 cookie 调对方端点一律 401（该角色未登录）
+
+    多角色并存下，学生 cookie（sc_token_student）调教师接口时后端只认
+    sc_token_teacher，缺失即 401 → 前端跳登录页，不会"串号"到教师身份。
+    """
+    st_token = login_cookies("2024001", "123456", "student")
+    # 学生 cookie 调教师专属接口 → 401
+    resp = client.get("/api/teacher/checkin/sessions", cookies=st_token)
+    assert resp.json()["code"] == 401
+    resp = client.get("/api/teacher/courses", cookies=st_token)
+    assert resp.json()["code"] == 401
+
+    t_token = login_cookies("T001", "123456", "teacher")
+    # 教师 cookie 调学生专属接口 → 401
+    resp = client.get("/api/student/courses", cookies=t_token)
+    assert resp.json()["code"] == 401
+    resp = client.get("/api/student/checkin/active", cookies=t_token)
+    assert resp.json()["code"] == 401
+
+    # 身份归属：各自角色 cookie 调 /me 都返回自身身份，互不干扰
+    resp = client.get("/api/auth/me", cookies=t_token)
+    body = resp.json()["data"]
+    assert body["role"] == "teacher"
+    assert body["user_id"] == "T001"
+    resp = client.get("/api/auth/me", cookies=st_token)
+    body = resp.json()["data"]
+    assert body["role"] == "student"
+    assert body["user_id"] == "2024001"

@@ -332,7 +332,7 @@ def test_t7a_hotwords_denied_for_student(student_token):
         params={"course_id": "CS101"},
         cookies=student_token,
     )
-    assert resp.json()["code"] == 403
+    assert resp.json()["code"] == 401
 
 
 def test_t7b_hotwords_denied_for_other_teacher(teacher_token, t002_token):

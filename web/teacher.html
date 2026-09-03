@@ -23,13 +23,22 @@
 
 <script src="js/api.js"></script>
 <script src="js/demo.js"></script>
+<script src="js/echarts.min.js"></script>
 <script>
 (function () {
   "use strict";
   var esc = demo.esc, $ = function(id){ return document.getElementById(id); };
   var courseMap = {};
+  var liveES = null;   // 当前实时推送连接（同一时刻只保留一个看板）
 
-  demo.initDemo("教师端").then(function () {
+  /** echarts 实例复用（重复 init 会告警），echarts 未加载时返回 null */
+  function ch(id) {
+    var el = $(id);
+    if (!el || !window.echarts) return null;
+    return echarts.getInstanceByDom(el) || echarts.init(el);
+  }
+
+  demo.initDemo("教师端", "teacher").then(function () {
     demo.notifWatcher();
     var m = document.querySelector("main.content");
     api.get("/api/teacher/courses").then(function (list) {
@@ -61,6 +70,10 @@
       '<div class="card stat-card stat-ok"><div class="stat-label">进行中</div><div class="stat-value" id="ov-live">—</div></div>' +
       '<div class="card stat-card"><div class="stat-label">累计签到人次</div><div class="stat-value" id="ov-signed">—</div></div>' +
       '</div>' +
+      '<div class="grid grid-2" style="margin-bottom:16px">' +
+      '<div class="card"><div class="card-title">近期签到人次（最近 15 次会话）</div><div id="ov-trend" style="height:250px"></div></div>' +
+      '<div class="card"><div class="card-title">各课程签到人次占比</div><div id="ov-pie" style="height:250px"></div></div>' +
+      '</div>' +
       (Object.keys(courseMap).length ?
         '<div class="card"><div class="card-title">我的课程</div><div class="table-wrap"><table class="tbl"><thead><tr><th>课程</th><th>学分</th><th>学期</th><th>选课人数</th></tr></thead><tbody>' +
         Object.keys(courseMap).map(function (id) {
@@ -73,7 +86,41 @@
       $("ov-sess").textContent = list.length;
       $("ov-live").textContent = list.filter(function (s) { return s.status === 1; }).length;
       $("ov-signed").textContent = list.reduce(function (a, s) { return a + (s.signed_count || 0); }, 0);
+      drawOverviewCharts(list || []);
     });
+  }
+
+  function drawOverviewCharts(list) {
+    var trend = ch("ov-trend");
+    if (trend) {
+      var sess = list.slice(0, 15).reverse(); // 旧 → 新
+      trend.setOption({
+        tooltip: { trigger: "axis" },
+        grid: { left: 40, right: 16, top: 24, bottom: 30 },
+        xAxis: { type: "category", data: sess.map(function (s) { return demo.shortTime(s.create_time).slice(6); }) },
+        yAxis: { type: "value", minInterval: 1 },
+        series: [{
+          type: "bar", data: sess.map(function (s) { return s.signed_count || 0; }),
+          itemStyle: { color: "#3b6fe0", borderRadius: [4, 4, 0, 0] }, barMaxWidth: 26
+        }]
+      });
+    }
+    var pie = ch("ov-pie");
+    if (pie) {
+      var byCourse = {};
+      list.forEach(function (s) {
+        var k = s.course_name || s.course_id;
+        byCourse[k] = (byCourse[k] || 0) + (s.signed_count || 0);
+      });
+      pie.setOption({
+        tooltip: { trigger: "item" },
+        series: [{
+          type: "pie", radius: ["38%", "66%"],
+          data: Object.keys(byCourse).map(function (k) { return { name: k, value: byCourse[k] }; }),
+          label: { formatter: "{b}\n{c} 人次" }
+        }]
+      });
+    }
   }
 
   /* ---------- 课堂签到 ---------- */
@@ -93,25 +140,38 @@
     function loadSessions() {
       api.get("/api/teacher/checkin/sessions").then(function (list) {
         if (!list || !list.length) { $("ck-sessions").innerHTML = '<div class="empty">暂无会话，点击上方发起签到</div>'; return; }
-        $("ck-sessions").innerHTML =
-          '<div class="table-wrap"><table class="tbl"><thead><tr><th>状态</th><th>课程</th><th>时间</th><th>围栏</th><th>已签</th><th>操作</th></tr></thead><tbody>' +
-          list.map(function (s) {
-            var st = s.status === 1 ? '<span class="live">进行中</span>' :
-              '<span class="badge" style="background:var(--muted-soft);color:var(--muted)">已结束</span>';
-            var act = s.status === 1
-              ? '<div class="row"><button class="btn btn-primary btn-sm" data-view="' + s.id + '">看板</button>' +
-                '<button class="btn btn-danger btn-sm" data-end="' + s.id + '">结束</button></div>'
-              : '<button class="btn btn-outline btn-sm" data-view="' + s.id + '">看板</button>';
-            return "<tr><td>" + st + "</td><td>" + esc(s.course_name || s.course_id) + "</td><td>" +
-              demo.shortTime(s.create_time) + "</td><td>" + esc(s.range_meters || "—") + " 米</td><td>" +
-              esc(s.signed_count || 0) + " 人</td><td>" + act + "</td></tr>";
-          }).join("") + "</tbody></table></div>" +
-          '<div id="ck-dash"></div>';
-        // 事件绑定
-        $("ck-sessions").querySelectorAll("button[data-view]").forEach(function (b) {
+        // 进行中优先排序，最多展示 6 条，其余折叠
+        var MAX_SHOW = 6;
+        var visible = list.slice(0, MAX_SHOW);
+        var hidden = list.slice(MAX_SHOW);
+        function rowHtml(s) {
+          var st = s.status === 1 ? '<span class="live">进行中</span>' :
+            '<span class="badge" style="background:var(--muted-soft);color:var(--muted)">已结束</span>';
+          var act = s.status === 1
+            ? '<div class="row"><button class="btn btn-primary btn-sm" data-view="' + s.id + '">看板</button>' +
+              '<button class="btn btn-danger btn-sm" data-end="' + s.id + '">结束</button></div>'
+            : '<button class="btn btn-outline btn-sm" data-view="' + s.id + '">看板</button>';
+          return "<tr><td>" + st + "</td><td>" + esc(s.course_name || s.course_id) + "</td><td>" +
+            demo.shortTime(s.create_time) + "</td><td>" + esc(s.range_meters || "—") + " 米</td><td>" +
+            esc(s.signed_count || 0) + " 人</td><td>" + act + "</td></tr>";
+        }
+        var html = '<div class="table-wrap"><table class="tbl"><thead><tr><th>状态</th><th>课程</th><th>时间</th><th>围栏</th><th>已签</th><th>操作</th></tr></thead><tbody>' +
+          visible.map(rowHtml).join("") + "</tbody></table></div>";
+        if (hidden.length) {
+          html += '<div style="text-align:center;margin:8px 0">' +
+            '<button class="btn btn-outline btn-sm" id="ck-toggle">' +
+            '展开其余 ' + hidden.length + ' 条签到会话 ▼</button></div>' +
+            '<div id="ck-hidden" style="display:none">' +
+            '<div class="table-wrap"><table class="tbl"><tbody>' + hidden.map(rowHtml).join("") + "</tbody></table></div>" +
+            '</div>';
+        }
+        html += '<div id="ck-dash"></div>';
+        $("ck-sessions").innerHTML = html;
+        // 事件绑定（用 Array.call 避免旧浏览器 NodeList.forEach 兼容问题）
+        Array.prototype.forEach.call($("ck-sessions").querySelectorAll("button[data-view]"), function (b) {
           b.addEventListener("click", function () { viewDashboard(b.getAttribute("data-view")); });
         });
-        $("ck-sessions").querySelectorAll("button[data-end]").forEach(function (b) {
+        Array.prototype.forEach.call($("ck-sessions").querySelectorAll("button[data-end]"), function (b) {
           b.addEventListener("click", async function () {
             if (!confirm("结束该签到？未签学生将记缺勤")) return;
             try {
@@ -121,54 +181,174 @@
             } catch (e) { alert(e.message || "操作失败"); }
           });
         });
+        // 折叠/展开切换
+        var toggle = $("ck-toggle");
+        if (toggle) toggle.addEventListener("click", function () {
+          var box = $("ck-hidden");
+          if (!box) return;
+          var open = box.style.display !== "none";
+          box.style.display = open ? "none" : "";
+          toggle.textContent = open
+            ? "展开其余 " + hidden.length + " 条签到会话 ▼"
+            : "收起 ▲";
+        });
       });
     }
 
+    function closeLive() {
+      if (liveES) { liveES.close(); liveES = null; }
+    }
+
     function viewDashboard(sid) {
+      closeLive();
       var box = $("ck-dash");
+      if (!box) { alert("看板容器不存在（ck-dash 未找到），请刷新页面重试"); return; }
       box.innerHTML = '<div class="light">看板加载中…</div>';
       api.get("/api/teacher/checkin/dashboard/" + sid).then(function (d) {
-        var students = d.students || [];
-        box.innerHTML =
-          '<div class="card-title" style="margin-top:14px">签到看板 · ' + esc(d.session.course_id) + "</div>" +
-          '<div class="table-wrap"><table class="tbl"><thead><tr><th>学号</th><th>姓名</th><th>状态</th><th>时间</th><th>相似度</th><th>操作</th></tr></thead><tbody>' +
-          (students.length ? students.map(function (s) {
-            var st = s.status === "未签到" || s.status === "缺勤"
-              ? '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">' + esc(s.status) + "</span>"
-              : '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">' + esc(s.status) + "</span>";
-            var act = s.review_status === 1
-              ? '<button class="btn btn-success btn-sm" data-rec="' + s.record_id + '" data-act="approve">通过</button>' +
-                '<button class="btn btn-danger btn-sm" data-rec="' + s.record_id + '" data-act="reject">驳回</button>'
-              : "";
-            return "<tr><td>" + esc(s.student_no) + "</td><td>" + esc(s.name) + "</td><td>" + st + "</td>" +
-              "<td>" + demo.shortTime(s.check_in_time) + "</td><td>" + esc(s.similarity1 ?? "—") + "</td><td><div class='row'>" + act + "</div></td></tr>";
-          }).join("") : '<tr><td colspan="6" class="light">该课程暂无选课学生</td></tr>') +
-          "</tbody></table></div>";
-        box.querySelectorAll("button[data-rec]").forEach(function (b) {
-          b.addEventListener("click", async function () {
-            var remark = prompt("备注（可留空）", "");
-            if (remark === null) return;
-            try {
-              await api.post("/api/teacher/checkin/attendance/" + b.getAttribute("data-rec") + "/review",
-                { action: b.getAttribute("data-act"), remark: remark });
-              viewDashboard(sid);
-            } catch (e) { alert(e.message || "操作失败"); }
+        try {
+          var students = d.students || [];
+          var s = d.session || {};
+          var signed = 0, late = 0, pending = 0;
+          students.forEach(function (x) {
+            if (x.status === "正常") signed++;
+            else if (x.status === "迟到") late++;
+            if (x.review_status === 1) pending++;
           });
-        });
+          box.innerHTML =
+            '<div class="card-title" style="margin-top:14px">签到看板 · ' + esc(s.course_id) +
+            ' <span id="ck-live-flag"></span></div>' +
+            '<div class="row" style="margin:8px 0">' +
+            '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">已签 <b id="ck-c-signed">' + signed + '</b></span>' +
+            '<span class="badge" style="background:var(--amber-soft);color:#92400e">迟到 <b id="ck-c-late">' + late + '</b></span>' +
+            '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">待复核 <b id="ck-c-pending">' + pending + '</b></span>' +
+            '<button class="btn btn-outline btn-sm" id="ck-refresh">刷新</button>' +
+            '<button class="btn btn-outline btn-sm" id="ck-export">⬇ 导出考勤 Excel</button>' +
+            '</div>' +
+            '<div id="ck-live-box" style="display:none;border:1px solid var(--border);border-radius:var(--radius);' +
+            'margin-bottom:10px;max-height:190px;overflow:auto;background:#fbfdff">' +
+            '<div class="light" style="padding:6px 10px;border-bottom:1px solid var(--border)">📡 实时签到动态（学生签到即推送，无需刷新）</div>' +
+            '<div id="ck-live-feed"></div></div>' +
+            '<div class="table-wrap"><table class="tbl"><thead><tr><th>学号</th><th>姓名</th><th>状态</th><th>时间</th><th>相似度</th><th>操作</th></tr></thead><tbody>' +
+            (students.length ? students.map(function (st) {
+              var stat = st.status === "未签到" || st.status === "缺勤"
+                ? '<span class="badge" style="background:var(--absent-soft);color:var(--absent)">' + esc(st.status) + "</span>"
+                : '<span class="badge" style="background:var(--ok-soft);color:var(--ok)">' + esc(st.status) + "</span>";
+              var act = st.review_status === 1
+                ? '<button class="btn btn-success btn-sm" data-rec="' + st.record_id + '" data-act="approve">通过</button>' +
+                  '<button class="btn btn-danger btn-sm" data-rec="' + st.record_id + '" data-act="reject">驳回</button>'
+                : "";
+              return "<tr><td>" + esc(st.student_no) + "</td><td>" + esc(st.name) + "</td><td>" + stat + "</td>" +
+                "<td>" + demo.shortTime(st.check_in_time) + "</td><td>" + esc(st.similarity1 != null ? st.similarity1 : "—") + "</td><td><div class='row'>" + act + "</div></td></tr>";
+            }).join("") : '<tr><td colspan="6" class="light">该课程暂无选课学生</td></tr>') +
+            "</tbody></table></div>";
+          Array.prototype.forEach.call(box.querySelectorAll("button[data-rec]"), function (b) {
+            b.addEventListener("click", async function () {
+              var remark = prompt("备注（可留空）", "");
+              if (remark === null) return;
+              try {
+                await api.post("/api/teacher/checkin/attendance/" + b.getAttribute("data-rec") + "/review",
+                  { action: b.getAttribute("data-act"), remark: remark });
+                viewDashboard(sid);
+              } catch (e) { alert(e.message || "操作失败"); }
+            });
+          });
+          var refreshBtn = $("ck-refresh");
+          if (refreshBtn) refreshBtn.addEventListener("click", function () { viewDashboard(sid); });
+          var exportBtn = $("ck-export");
+          if (exportBtn) exportBtn.addEventListener("click", function () {
+            window.open(api.API_BASE + "/api/teacher/checkin/" + sid + "/export");
+          });
+          if (s.status === 1) startLive(sid);
+        } catch (renderErr) {
+          box.innerHTML = '<div class="bad">看板渲染出错：' + esc(renderErr.message || String(renderErr)) + '</div>';
+        }
       }).catch(function (e) { box.innerHTML = '<div class="bad">' + esc(e.message || "加载失败") + "</div>"; });
+    }
+
+    /** SSE 实时订阅：签到/待复核/审核/会话结束事件即时上屏 */
+    function startLive(sid) {
+      if (!window.EventSource) return;
+      var flag = $("ck-live-flag");
+      if (flag) flag.innerHTML = ' <span class="live">实时推送中</span>';
+      $("ck-live-box").style.display = "";
+      var feed = $("ck-live-feed");
+      function addFeed(html) {
+        if (!feed) return;
+        var div = document.createElement("div");
+        div.style.cssText = "padding:5px 10px;border-bottom:1px dashed var(--border);font-size:12.5px;";
+        div.innerHTML = html;
+        feed.prepend(div);
+        while (feed.children.length > 30) feed.lastChild.remove();
+      }
+      function bump(id, by) {
+        var el = $(id);
+        if (el) el.textContent = (parseInt(el.textContent, 10) || 0) + by;
+      }
+      liveES = new EventSource(api.API_BASE + "/api/teacher/checkin/" + sid + "/stream");
+      liveES.addEventListener("snapshot", function (e) {
+        try {
+          var d = JSON.parse(e.data);
+          var st = d.stats || {};
+          if ($("ck-c-signed")) $("ck-c-signed").textContent = (st["正常"] || 0);
+          if ($("ck-c-late")) $("ck-c-late").textContent = (st["迟到"] || 0);
+          if ($("ck-c-pending")) $("ck-c-pending").textContent = (d.review_pending || 0);
+        } catch (err) { /* 忽略坏帧 */ }
+      });
+      liveES.onmessage = function (e) {
+        var d;
+        try { d = JSON.parse(e.data); } catch (err) { return; }
+        var t = d.type;
+        if (t === "checkin") {
+          addFeed("✅ <b>" + esc(d.name) + "</b>（" + esc(d.student_no) + "）签到成功 · " +
+            esc(d.status_cn) + " · " + esc(d.check_in_time) + " · 相似度 " + esc(d.similarity));
+          bump(d.status === 2 ? "ck-c-late" : "ck-c-signed", 1);
+        } else if (t === "review") {
+          addFeed("⚠️ <b>" + esc(d.name) + "</b>（" + esc(d.student_no) + "）" + esc(d.reason));
+          bump("ck-c-pending", 1);
+        } else if (t === "apply") {
+          addFeed("📝 <b>" + esc(d.name) + "</b>（" + esc(d.student_no) + "）提交申请：" + esc(d.reason));
+        } else if (t === "review_done") {
+          addFeed("✔️ <b>" + esc(d.student_id) + "</b> 审核完成 → " + esc(d.status_cn));
+          bump("ck-c-pending", -1);
+        } else if (t === "session_end") {
+          addFeed("🏁 签到已结束" + (d.absent_created ? "，补记缺勤 " + esc(d.absent_created) + " 人" : ""));
+          closeLive();
+          if (flag) flag.innerHTML = "";
+          setTimeout(function () { viewDashboard(sid); loadSessions(); }, 900);
+        }
+      };
+      liveES.onerror = function () {
+        if (!liveES) return; // 主动关闭（会话结束/切换看板）不算异常
+        closeLive();
+        if (flag) flag.innerHTML = "";
+        addFeed("实时连接已断开（网络中断或会话结束），点击「刷新」查看最新数据");
+      };
     }
 
     $("ck-start").addEventListener("click", async function () {
       var cid = $("ck-course").value;
       if (!cid) { alert("请选择课程"); return; }
-      var btn = this; btn.disabled = true; btn.textContent = "发起中…";
+      var btn = this; btn.disabled = true; btn.textContent = "定位中…";
       try {
+        // 采集教师真实定位（高精度，10 秒超时）
+        var lat = null, lng = null;
+        try {
+          var pos = await new Promise(function (res, rej) {
+            navigator.geolocation.getCurrentPosition(res, rej,
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+          });
+          lat = pos.coords.latitude; lng = pos.coords.longitude;
+        } catch (e) {
+          alert("⚠ 定位获取失败（" + (e && e.message || "未知") + "），将使用默认坐标发起签到。请检查浏览器定位权限。");
+        }
+        btn.textContent = "发起中…";
         await api.post("/api/teacher/checkin/start", {
           course_id: cid,
           duration_minutes: parseInt($("ck-min").value, 10) || 5,
-          range_meters: parseInt($("ck-range").value, 10) || 200
+          range_meters: parseInt($("ck-range").value, 10) || 200,
+          lat: lat, lng: lng
         });
-        alert("签到已发起，学生端将收到提醒");
+        alert("签到已发起，学生端将收到提醒" + (lat ? "" : "（注意：教师定位未获取，围栏校验可能异常）"));
         loadSessions();
       } catch (e) { alert(e.message || "发起失败"); }
       btn.disabled = false; btn.textContent = "发起签到";
@@ -188,14 +368,63 @@
       '<input id="it-content" class="input" style="flex:1;min-width:160px" placeholder="内容">' +
       '<input id="it-score" type="number" class="input" style="width:80px" placeholder="1-5">' +
       '<button class="btn btn-outline" id="it-save">保存</button></div></div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">互动统计</div>' +
+      '<div class="row" style="margin-bottom:8px"><select id="st-course" class="input" style="flex:1;min-width:200px"></select>' +
+      '<button class="btn btn-outline btn-sm" id="st-load">查看统计</button>' +
+      '<span id="st-summary" class="light"></span></div>' +
+      '<div class="grid grid-2"><div><div class="light" style="margin:4px 0">互动类型分布</div><div id="st-type" style="height:230px"></div></div>' +
+      '<div><div class="light" style="margin:4px 0">互动次数 Top10</div><div id="st-top" style="height:230px"></div></div></div></div>' +
       '<div class="card"><div class="card-title">互动历史</div>' +
       '<div class="row" style="margin-bottom:8px"><select id="it-course" class="input" style="flex:1;min-width:200px"></select>' +
       '<button class="btn btn-outline btn-sm" id="it-refresh">刷新</button></div><div id="it-list"></div></div>';
 
     courseOptions("pk-course");
     courseOptions("it-course");
+    courseOptions("st-course");
 
     loadInteractions();
+    loadStats();
+
+    function loadStats() {
+      var cid = $("st-course").value;
+      if (!cid) return;
+      api.get("/api/interaction/stats/" + cid).then(function (d) {
+        var typeMap = { question: "提问", rating: "评分", random_pick: "随机点名" };
+        $("st-summary").textContent = "累计互动 " + (d.total || 0) + " 次 · 今日 " +
+          (d.today_count || 0) + " 次 · 选课 " + (d.enrolled_count || 0) + " 人";
+        var pie = ch("st-type");
+        if (pie) {
+          pie.setOption({
+            tooltip: { trigger: "item" },
+            series: [{
+              type: "pie", radius: ["32%", "60%"],
+              data: Object.keys(d.by_type || {}).map(function (k) {
+                return { name: typeMap[k] || k, value: d.by_type[k] };
+              }),
+              label: { formatter: "{b} {c} 次" }
+            }]
+          });
+        }
+        var top = d.top_students || [];
+        var bar = ch("st-top");
+        if (bar) {
+          bar.setOption({
+            tooltip: {},
+            grid: { left: 8, right: 30, top: 8, bottom: 8, containLabel: true },
+            xAxis: { type: "value", minInterval: 1 },
+            yAxis: { type: "category", data: top.map(function (t) { return t.name || t.student_id; }).reverse() },
+            series: [{
+              type: "bar",
+              data: top.map(function (t) { return t.count; }).reverse(),
+              itemStyle: { color: "#f59e0b", borderRadius: [0, 4, 4, 0] },
+              barMaxWidth: 16, label: { show: true, position: "right" }
+            }]
+          });
+        }
+      }).catch(function (e) { $("st-summary").textContent = "统计加载失败：" + (e.message || ""); });
+    }
+    $("st-load").addEventListener("click", loadStats);
+    $("st-course").addEventListener("change", loadStats);
     function loadInteractions() {
       var cid = $("it-course").value;
       api.get("/api/interaction/list?course_id=" + (cid || "")).then(function (list) {
@@ -218,6 +447,7 @@
       try {
         var d = await api.get("/api/interaction/random-pick/" + cid);
         $("pk-result").innerHTML = '本次点名 → <b style="font-size:16px;color:var(--blue)">🎓 ' + esc(d.name) + "（" + esc(d.student_no) + "）</b> —— 已推送给全班学生";
+        loadStats();
       } catch (e) { alert(e.message || "点名失败"); }
       btn.disabled = false; btn.textContent = "🎲 随机点名";
     });
@@ -230,7 +460,7 @@
       };
       if ($("it-type").value === "rating") body.score = parseInt($("it-score").value, 10) || 1;
       if (!body.student_id) { alert("请输入学生学号"); return; }
-      try { await api.post("/api/interaction/", body); alert("已保存"); loadInteractions(); }
+      try { await api.post("/api/interaction/", body); alert("已保存"); loadInteractions(); loadStats(); }
       catch (e) { alert(e.message || "保存失败"); }
     });
   }
@@ -272,11 +502,16 @@
               '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="grade">AI 批改</button>' +
               '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="gradebook">成绩册</button>' +
               '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="subs">提交列表</button>' +
+              '<button class="btn btn-outline btn-sm" data-hw="' + h.id + '" data-act="export">⬇ 导出</button>' +
               "</div></td></tr>";
           }).join("") + "</tbody></table></div>";
         $("hw-list").querySelectorAll("button[data-hw]").forEach(function (b) {
           b.addEventListener("click", function () {
             var act = b.getAttribute("data-act"), id = b.getAttribute("data-hw");
+            if (act === "export") {
+              window.open(api.API_BASE + "/api/homework/" + id + "/gradebook/export");
+              return;
+            }
             if (act === "grade") {
               $("hw-result").textContent = "AI 批改中（可能需要 1-2 分钟）…";
               api.post("/api/ai/homework/" + id + "/grade-all").then(function (d) {

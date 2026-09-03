@@ -1,7 +1,9 @@
 /* ============================================================
- * api.js — 统一请求封装（httpOnly Cookie 认证版）
- * token 存放在 httpOnly cookie（统一命名 sc_token，登录自动覆盖）
- * 前端不存任何凭证，fetch 同源自动携带 cookie
+ * api.js — 统一请求封装（多角色 Cookie 认证版）
+ * 每个角色独立 httpOnly cookie（sc_token_student/teacher/...），
+ * 同一浏览器可同时登录多个角色，各标签互不影响。
+ * api.setRole(role) 声明当前页面角色 → 请求自动带 X-Role 头，
+ * 后端据此从对应角色 cookie 解析身份。
  * 401 → 跳转登录页
  * ============================================================ */
 (function (global) {
@@ -11,6 +13,11 @@
     location.protocol === "http:" || location.protocol === "https:"
       ? location.origin
       : "http://127.0.0.1:8000";
+
+  var _role = null;   // 当前页面角色（student/teacher/counselor/admin）
+
+  /** 声明当前页面角色，此后所有请求携带 X-Role 头 */
+  function setRole(role) { _role = role; }
 
   /**
    * request(path, {method, body, silent})
@@ -22,6 +29,7 @@
     var method = (opts.method || "GET").toUpperCase();
     var headers = {};
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+    if (_role) headers["X-Role"] = _role;
 
     return fetch(API_BASE + path, {
       method: method,
@@ -66,5 +74,5 @@
   }
 
   global.API_BASE = API_BASE;
-  global.api = { request: request, get: get, post: post };
+  global.api = { request: request, get: get, post: post, setRole: setRole };
 })(window);

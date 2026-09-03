@@ -35,6 +35,7 @@ REQUIRED = [
     ("numpy", "numpy"),
     ("insightface", "insightface"),
     ("onnxruntime", "onnxruntime"),
+    ("openpyxl", "openpyxl"),
 ]
 
 BANNER = r"""
@@ -112,6 +113,24 @@ def print_startup_banner(port: int) -> None:
     print("============================================================")
 
 
+def preheat_face_engine() -> None:
+    """后台线程预热 InsightFace 人脸模型（约 280MB）。
+
+    避免演示时第一次人脸签到请求现场加载模型卡顿数秒；
+    放在启动器而非 app/main.py：pytest 导入应用时不会触发，测试零干扰。
+    """
+    def _load():
+        try:
+            from app.core.face_engine import get_engine
+
+            get_engine()
+            print("[OK]    人脸模型预热完成（首次人脸签到无需等待）")
+        except Exception as exc:
+            print(f"[WARN]  人脸模型预热失败（首次签到时将再次尝试加载）：{exc}")
+
+    threading.Thread(target=_load, daemon=True, name="face-preheat").start()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="全流程智慧课堂系统 一键启动"
@@ -144,6 +163,8 @@ def main() -> None:
         seed_demo.main()
 
     print_startup_banner(args.port)
+    # 与 uvicorn 启动并行预热人脸模型，演示时首次签到秒响应
+    preheat_face_engine()
 
     if not args.no_browser:
         url = f"http://127.0.0.1:{args.port}/"
