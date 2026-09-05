@@ -1,0 +1,45 @@
+@use './variables' as *;
+
+// Element Plus 主题覆盖:对齐智课堂深蓝 × 琥珀橙风格
+
+// 主按钮用深蓝渐变
+.el-button--primary {
+  background: var(--blue-grad);
+  border-color: var(--blue);
+  &:hover {
+    opacity: 0.9;
+    background: var(--blue-grad);
+    border-color: var(--blue);
+  }
+}
+
+// 侧栏菜单选中态:左侧琥珀竖条
+.el-menu {
+  border-right: none;
+  .el-menu-item.is-active {
+    color: var(--blue-deep);
+    background: var(--amber-soft);
+    position: relative;
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--amber);
+    }
+  }
+}
+
+// 卡片圆角
+.el-card {
+  border-radius: var(--radius);
+  border-color: var(--border);
+}
+
+// 表格表头浅蓝底
+.el-table th.el-table__cell {
+  background: #f8fafc;
+  color: var(--text);
+}

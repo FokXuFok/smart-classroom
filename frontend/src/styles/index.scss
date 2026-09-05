@@ -1,0 +1,276 @@
+@use './variables';
+@use './element-overrides';
+@use './mixins' as *;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+// 全局布局
+.layout {
+  height: 100vh;
+}
+
+.sidebar {
+  background: var(--white);
+  border-right: 1px solid var(--border);
+  .brand {
+    height: var(--topbar-h);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--blue-grad);
+      color: #fff;
+      font-size: 20px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .brand-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--blue-deep);
+    }
+  }
+  .menu {
+    border-right: none;
+    padding: 8px;
+  }
+}
+
+.topbar {
+  height: var(--topbar-h) !important;
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  .topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+}
+
+.content {
+  background: var(--bg);
+  padding: 24px;
+}
+
+// 通知铃铛
+.bell-badge {
+  cursor: pointer;
+}
+
+// 用户 chip
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  &:hover {
+    background: var(--muted-soft);
+  }
+  .user-avatar {
+    background: var(--blue-grad);
+    color: #fff;
+  }
+  .user-name {
+    font-weight: 500;
+  }
+}
+
+// 页面标题
+.page-header {
+  .page-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+  }
+}
+
+// 路由切换动画
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all 0.25s ease;
+}
+.fade-slide-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+// 登录页
+.login-page {
+  min-height: 100vh;
+  @include flex-center;
+  background: var(--blue-grad);
+  .login-card {
+    width: 420px;
+    max-width: 92vw;
+    background: var(--white);
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: var(--shadow-pop);
+  }
+  .login-brand {
+    text-align: center;
+    margin-bottom: 24px;
+    .brand-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      background: var(--blue-grad);
+      color: #fff;
+      font-size: 28px;
+      font-weight: bold;
+      margin-bottom: 12px;
+    }
+    h1 {
+      color: var(--blue-deep);
+      font-size: 24px;
+      margin-bottom: 4px;
+    }
+    p {
+      color: var(--text-sub);
+      font-size: 13px;
+    }
+  }
+  .login-btn {
+    width: 100%;
+    margin-top: 8px;
+  }
+  .demo-accounts {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--border);
+    .demo-title {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-bottom: 8px;
+    }
+    .demo-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  }
+}
+
+// 通知面板
+.notif-panel {
+  .notif-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .notif-list {
+    max-height: 400px;
+    overflow-y: auto;
+    @include scrollbar;
+  }
+  .notif-empty {
+    text-align: center;
+    color: var(--text-sub);
+    padding: 24px 0;
+  }
+  .notif-item {
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    &:hover {
+      background: var(--muted-soft);
+    }
+    &.unread {
+      background: var(--amber-soft);
+    }
+    .notif-title {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .notif-content {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-bottom: 4px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .notif-time {
+      font-size: 11px;
+      color: var(--muted);
+    }
+  }
+}
+
+// 占位页(阶段 A 各端 overview 占位)
+.placeholder-page {
+  @include flex-center;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 60vh;
+  color: var(--text-sub);
+  .placeholder-icon {
+    font-size: 48px;
+    color: var(--amber);
+  }
+  h2 {
+    color: var(--blue-deep);
+  }
+}
+
+// 404
+.not-found {
+  @include flex-center;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100vh;
+  background: var(--bg);
+  .not-found-code {
+    font-size: 96px;
+    font-weight: bold;
+    color: var(--blue-deep);
+  }
+}

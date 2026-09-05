@@ -1,0 +1,40 @@
+// 沿用 web/css/style.css 第 5-31 行 CSS 变量,保持视觉一致
+:root {
+  --blue-deep: #16337a;
+  --blue: #1e3a8a;
+  --blue-grad: linear-gradient(135deg, #16337a 0%, #1e3a8a 100%);
+  --amber: #f59e0b;
+  --amber-soft: #fef3c7;
+  --bg: #f4f6fa;
+  --border: #e5e9f2;
+  --text: #1f2937;
+  --text-sub: #64748b;
+  --white: #ffffff;
+  --ok: #16a34a;
+  --ok-soft: #dcfce7;
+  --late: #f59e0b;
+  --late-soft: #fef3c7;
+  --absent: #dc2626;
+  --absent-soft: #fee2e2;
+  --pending: #7c3aed;
+  --pending-soft: #ede9fe;
+  --muted: #64748b;
+  --muted-soft: #f1f5f9;
+  --radius: 8px;
+  --shadow-hover: 0 8px 24px rgba(22, 51, 122, 0.08);
+  --shadow-pop: 0 12px 40px rgba(22, 51, 122, 0.18);
+  --sidebar-w: 236px;
+  --topbar-h: 60px;
+}
+
+// SCSS 变量同步(便于在 .scss 里计算)
+$blue-deep: #16337a;
+$blue: #1e3a8a;
+$amber: #f59e0b;
+$bg: #f4f6fa;
+$border: #e5e9f2;
+$text: #1f2937;
+$text-sub: #64748b;
+$radius: 8px;
+$sidebar-w: 236px;
+$topbar-h: 60px;

@@ -8,3 +8,14 @@ venv/
 uploads/
 .idea/
 logs/
+
+# 前端构建产物与依赖
+node_modules/
+dist/
+*.local
+.vite/
+
+# IDE / 工具缓存
+.trae/
+.vscode/
+*.tsbuildinfo

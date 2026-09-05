@@ -34,6 +34,7 @@ from app.models import (
     SubmissionRecord,
     TestCase,
 )
+from scripts.seed_base import seed_base
 
 random.seed(20260814)  # 固定随机种子：重复运行结果可复现
 
@@ -403,6 +404,7 @@ def main() -> None:
     db = SessionLocal()
     try:
         seed_admin(db)
+        seed_base(db)  # 基础数据：teacher/counselor/class/course/student/counselor_class/enrollment
         seed_schedule(db)
         hw_a = seed_demo_homework(db)
         seed_demo_enrollment(db)

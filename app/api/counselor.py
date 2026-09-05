@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""辅导员端 API：管辖班级、学生名单、学业预警、学生学业档案、整体概览"""
+"""辅导员端 API：管辖班级、学生名单、学业预警、学生学业档案、整体概览、批量通知"""
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, get_db, require_roles
+from app.api.notification import push_many
 from app.core.exception import BizError, ok
 from app.models import (
     AttendanceRecord,
@@ -381,3 +383,64 @@ def counselor_stat(
             "warning_count": len(warning_rows),
         }
     )
+
+
+# ---------- 批量通知（补丁项：原 notification.py 无 HTTP 端点，此处暴露给辅导员）----------
+
+class NotifyReq(BaseModel):
+    """批量通知请求:class_ids 按班级发 / student_nos 按学生发(二选一)"""
+
+    class_ids: list[str] = []
+    student_nos: list[str] = []
+    title: str
+    content: str
+
+
+@router.post("/notify")
+def notify_classes(
+    req: NotifyReq,
+    current: CurrentUser = Depends(require_roles("counselor")),
+    db=Depends(get_db),
+):
+    """向所选班级或指定学生批量推送站内通知(内部复用 push_many 单事务写入)"""
+    if not req.class_ids and not req.student_nos:
+        raise BizError(400, "请至少选择一个班级或学生")
+    if not req.title.strip():
+        raise BizError(400, "通知标题不能为空")
+
+    # 校验归属:只能向本人管辖班级/学生发送
+    my_ids = set(_my_class_ids(db, current.user.counselor_no))
+
+    target_nos: list[str] = []
+    if req.student_nos:
+        # 按学生发:校验这些学生都在管辖班级
+        rows = (
+            db.query(Student.student_no, Student.class_id)
+            .filter(Student.student_no.in_(req.student_nos))
+            .all()
+        )
+        for sno, cid in rows:
+            if cid not in my_ids:
+                raise BizError(403, f"学生 {sno} 不在您管辖班级")
+            target_nos.append(sno)
+    if req.class_ids:
+        # 按班级发:校验班级归属 + 收集学生
+        for cid in req.class_ids:
+            if cid not in my_ids:
+                raise BizError(403, f"班级 {cid} 不在您管辖范围")
+        for cid in req.class_ids:
+            students = (
+                db.query(Student)
+                .filter(Student.class_id == cid, Student.status == 1)
+                .all()
+            )
+            target_nos.extend(s.student_no for s in students)
+
+    # 去重(班级+学生可能重叠)
+    target_nos = list(dict.fromkeys(target_nos))
+    items = [
+        (sno, "student", "system", req.title[:200], req.content, None, None)
+        for sno in target_nos
+    ]
+    sent = push_many(db, items)
+    return ok({"sent": sent}, message=f"已通知 {sent} 名学生")
