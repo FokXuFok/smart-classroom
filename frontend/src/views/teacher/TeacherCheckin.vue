@@ -143,6 +143,11 @@ async function locate() {
     form.lat = pos.lat;
     form.lng = pos.lng;
     useDefault.value = false;
+    ElMessage.success(
+      `定位成功: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`,
+    );
+  } else {
+    ElMessage.warning(geo.error.value || '定位失败,将使用默认坐标');
   }
 }
 
@@ -150,6 +155,18 @@ async function onStart() {
   if (!form.course_id) {
     ElMessage.warning('请选择课程');
     return;
+  }
+  // 未勾选默认坐标但没采集到定位 → 自动先尝试采集
+  if (!useDefault.value && !form.lat && !form.lng) {
+    ElMessage.info('正在自动采集定位…');
+    const pos = await geo.getPosition();
+    if (pos) {
+      form.lat = pos.lat;
+      form.lng = pos.lng;
+    } else {
+      useDefault.value = true; // 采集失败自动降级默认坐标
+      ElMessage.warning(geo.error.value || '定位失败,本次使用默认坐标');
+    }
   }
   const lat = useDefault.value ? undefined : form.lat;
   const lng = useDefault.value ? undefined : form.lng;

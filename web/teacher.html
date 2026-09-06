@@ -131,7 +131,8 @@
       '<input id="ck-min" type="number" class="input" value="5" style="width:90px" title="时长(分钟)">' +
       '<input id="ck-range" type="number" class="input" value="200" style="width:90px" title="围栏(米)">' +
       '<button class="btn btn-amber" id="ck-start">发起签到</button></div>' +
-      '<div class="row" style="margin-top:8px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ck-skip-geo" style="cursor:pointer"> 跳过定位（用默认坐标直接发起）</label>' +
+      '<div class="row" style="margin-top:8px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ck-skip-geo" checked style="cursor:pointer"> 跳过定位（用默认坐标直接发起）</label>' +
+      '<button class="btn btn-outline btn-sm" id="ck-test-geo" style="margin-left:8px">测试定位</button>' +
       '<span id="ck-geo-status" class="light" style="margin-left:12px"></span></div>' +
       '<div class="light" style="margin-top:8px">学生需在围栏内通过人脸识别签到；发起后学生端会收到顶部横幅提醒。</div></div>' +
       '<div class="card"><div class="card-title">签到会话</div><div id="ck-sessions"></div></div>';
@@ -325,6 +326,37 @@
         if (flag) flag.innerHTML = "";
         addFeed("实时连接已断开（网络中断或会话结束），点击「刷新」查看最新数据");
       };
+    }
+
+    // 测试定位按钮（独立于签到流程，方便排查定位问题）
+    var testGeoBtn = $("ck-test-geo");
+    if (testGeoBtn) {
+      testGeoBtn.addEventListener("click", async function () {
+        var btn = this; btn.disabled = true; btn.textContent = "定位中…";
+        $("ck-geo-status").textContent = "正在获取定位…";
+        try {
+          if (!navigator.geolocation) {
+            throw { message: "浏览器不支持定位 API" };
+          }
+          var pos = await new Promise(function (res, rej) {
+            var done = false;
+            navigator.geolocation.getCurrentPosition(
+              function (p) { if (!done) { done = true; res(p); } },
+              function (e) { if (!done) { done = true; rej(e); } },
+              { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+            );
+            setTimeout(function () { if (!done) { done = true; rej({ message: "定位超时（8秒）" }); } }, 8500);
+          });
+          var lat = pos.coords.latitude, lng = pos.coords.longitude;
+          $("ck-geo-status").textContent = "✅ 定位成功：" + lat.toFixed(5) + ", " + lng.toFixed(5);
+          console.log("[定位测试] 成功:", lat, lng, "accuracy=", pos.coords.accuracy);
+        } catch (e) {
+          var msg = e && e.message || ("错误码 " + (e && e.code) || "未知");
+          $("ck-geo-status").textContent = "❌ 定位失败：" + msg;
+          console.warn("[定位测试] 失败:", e);
+        }
+        btn.disabled = false; btn.textContent = "测试定位";
+      });
     }
 
     $("ck-start").addEventListener("click", async function () {
