@@ -1,0 +1,25 @@
+<view class="container">
+  <view class="header-bar" wx:if="{{unreadCount > 0}}">
+    <text class="unread-text">🔴 未读 {{unreadCount}} 条</text>
+    <view class="read-all-btn" bindtap="onReadAll">全部已读</view>
+  </view>
+
+  <block wx:if="{{items.length > 0}}">
+    <view class="notif-item {{item.is_read ? 'read' : 'unread'}}" wx:for="{{items}}" wx:key="id"
+      bindtap="onItemTap" data-id="{{item.id}}" data-read="{{item.is_read}}">
+      <view class="notif-dot" wx:if="{{!item.is_read}}"></view>
+      <view class="notif-icon-wrap">
+        <text class="notif-emoji">{{item.is_read ? '📭' : '📬'}}</text>
+      </view>
+      <view class="notif-content">
+        <view class="notif-title">{{item.title}}</view>
+        <view class="notif-body">{{item.content}}</view>
+        <view class="notif-time">{{item.time_text}}</view>
+      </view>
+    </view>
+  </block>
+  <view class="empty" wx:else>
+    <view class="empty-icon">🔔</view>
+    暂无通知
+  </view>
+</view>

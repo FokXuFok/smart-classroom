@@ -1,0 +1,55 @@
+<view class="profile-page">
+  <!-- 用户信息头部 -->
+  <view class="profile-header">
+    <view class="deco-circle deco-1"></view>
+    <view class="deco-circle deco-2"></view>
+    <view class="header-content">
+      <view class="avatar">{{userInfo.name ? userInfo.name[0] : '?'}}</view>
+      <view class="user-info">
+        <view class="user-name">{{userInfo.name}}</view>
+        <view class="user-id">学号：{{userInfo.user_id}}</view>
+        <view class="user-role">🎓 学生</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="container">
+    <!-- 功能菜单 -->
+    <view class="card menu-card">
+      <view class="menu-item" bindtap="goCheckin">
+        <view class="menu-icon-wrap" style="background: #eef2ff;">
+          <text class="menu-icon">📍</text>
+        </view>
+        <text class="menu-text">签到打卡</text>
+        <text class="menu-arrow">›</text>
+      </view>
+      <view class="menu-item" bindtap="onFaceRegister">
+        <view class="menu-icon-wrap" style="background: #f0fdf4;">
+          <text class="menu-icon">📸</text>
+        </view>
+        <text class="menu-text">人脸注册</text>
+        <text class="menu-arrow">›</text>
+      </view>
+      <view class="menu-item" bindtap="goInteract">
+        <view class="menu-icon-wrap" style="background: #fef3c7;">
+          <text class="menu-icon">💬</text>
+        </view>
+        <text class="menu-text">互动记录</text>
+        <text class="menu-arrow">›</text>
+      </view>
+      <view class="menu-item" bindtap="goNotification">
+        <view class="menu-icon-wrap" style="background: #dbeafe;">
+          <text class="menu-icon">🔔</text>
+        </view>
+        <text class="menu-text">通知消息</text>
+        <text class="menu-arrow">›</text>
+      </view>
+    </view>
+
+    <button class="btn btn-danger btn-block logout-btn" bindtap="onLogout">
+      退出登录
+    </button>
+
+    <view class="app-version">智慧课堂学生端 v1.0.0</view>
+  </view>
+</view>

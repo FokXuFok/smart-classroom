@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """全流程智慧课堂系统 一键启动
-用法: python main.py [--seed] [--no-browser] [--no-frontend] [--port 8000]
+用法: python main.py [--seed] [--no-browser] [--no-frontend] [--port 8001]
 
 流程：依赖检查(缺失自动 pip 安装) → 数据库连通检查 → 增量建表(幂等)
-     → [可选 --seed] 演示种子数据 → 启动前端 dev(5173) + 后端 uvicorn(8000)
+     → [可选 --seed] 演示种子数据 → 启动前端 dev(5173) + 后端 uvicorn(8001)
      → [可选] 自动打开浏览器到前端 5173
 兼容任意 Python 解释器（自动使用当前解释器补装依赖）。
 """
@@ -188,6 +188,96 @@ def preheat_face_engine() -> None:
     threading.Thread(target=_load, daemon=True, name="face-preheat").start()
 
 
+def _forward_data(src: "socket.socket", dst: "socket.socket") -> None:
+    """把 src socket 的数据转发到 dst socket"""
+    try:
+        while True:
+            data = src.recv(65536)
+            if not data:
+                break
+            dst.sendall(data)
+    except Exception:
+        pass
+    finally:
+        try:
+            src.close()
+        except Exception:
+            pass
+        try:
+            dst.close()
+        except Exception:
+            pass
+
+
+def start_port_forwarder(listen_port: int, target_port: int) -> "subprocess.Popen | None":
+    """启动端口转发（8080 → 后端 8000），让微信小程序通过 8080 访问后端。
+    用子进程运行，main.py 退出时自动关闭。
+    """
+    forward_script = BASE_DIR / "scripts" / "port_forward.py"
+    if not forward_script.exists():
+        print(f"[WARN]  端口转发脚本不存在：{forward_script}")
+        return None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(forward_script)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            shell=False,
+        )
+        # 等待端口就绪（最多 2 秒）
+        import socket as _sock
+        for _ in range(20):
+            try:
+                s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+                s.settimeout(0.3)
+                s.connect(("127.0.0.1", listen_port))
+                s.close()
+                print(f"[OK]    端口转发已启动：{listen_port} → {target_port}（pid={proc.pid}）")
+                return proc
+            except Exception:
+                time.sleep(0.1)
+        print(f"[WARN]  端口转发启动超时（{listen_port}），小程序可能无法连接")
+        return proc
+    except Exception as exc:
+        print(f"[WARN]  端口转发启动失败：{exc}")
+        return None
+
+
+def cleanup_stale_processes(*ports: int) -> None:
+    """启动前清理残留进程（占用指定端口的旧进程）"""
+    if sys.platform != "win32":
+        return  # 非 Windows 不处理
+    import subprocess as sp
+    for p in ports:
+        try:
+            # 查找占用端口的进程
+            result = sp.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = set()
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if f":{p} " in line and "LISTENING" in line.upper():
+                    parts = line.split()
+                    if parts:
+                        try:
+                            pids.add(int(parts[-1]))
+                        except ValueError:
+                            pass
+            for pid in pids:
+                if pid == os.getpid():
+                    continue
+                try:
+                    sp.run(["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True, timeout=5)
+                    print(f"[OK]    清理残留进程：端口 {p} 上的 PID {pid}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="全流程智慧课堂系统 一键启动"
@@ -213,7 +303,26 @@ def main() -> None:
         "--frontend-port", type=int, default=5173,
         help="前端 dev 端口（默认 5173）",
     )
+    parser.add_argument(
+        "--no-cleanup", action="store_true",
+        help="跳过启动前的残留进程清理（默认会自动清理占用端口的旧进程）",
+    )
+    parser.add_argument(
+        "--forward-port", type=int, default=8080,
+        help="端口转发监听端口（默认 8080，转发到后端 8000，供微信小程序使用）",
+    )
+    parser.add_argument(
+        "--no-forward", action="store_true",
+        help="不启动端口转发（默认启动 8080→后端端口 的转发）",
+    )
     args = parser.parse_args()
+
+    # 启动前清理残留进程（解决 Errno 10048 端口占用）
+    if not args.no_cleanup:
+        cleanup_ports = [args.port, args.frontend_port]
+        if not args.no_forward:
+            cleanup_ports.append(args.forward_port)
+        cleanup_stale_processes(*cleanup_ports)
 
     check_deps()
     check_database()
@@ -240,6 +349,14 @@ def main() -> None:
     # 与 uvicorn 启动并行预热人脸模型，演示时首次签到秒响应
     preheat_face_engine()
 
+    # 启动端口转发（8080 → 后端端口，供微信小程序使用）
+    forward_proc = None
+    if not args.no_forward:
+        forward_proc = start_port_forwarder(args.forward_port, args.port)
+        if forward_proc:
+            print(f"  小程序转发   http://127.0.0.1:{args.forward_port}  → 后端 {args.port}")
+            print(f"               手机真机访问 http://<电脑WLAN_IP>:{args.forward_port}")
+
     if not args.no_browser:
         # 前端可用时打开 5173，否则打开后端旧 HTML 登录页
         url = (f"http://127.0.0.1:{args.frontend_port}/"
@@ -254,21 +371,22 @@ def main() -> None:
     from app.main import app
 
     try:
-        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+        uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
     finally:
-        # 后端退出时连带关闭前端 dev 子进程
-        if frontend_proc is not None and frontend_proc.poll() is None:
-            try:
-                if sys.platform == "win32":
-                    frontend_proc.send_signal(signal.CTRL_BREAK_EVENT)
-                else:
-                    frontend_proc.terminate()
-                frontend_proc.wait(timeout=5)
-            except Exception:
+        # 后端退出时连带关闭前端 dev 和端口转发子进程
+        for proc in (frontend_proc, forward_proc):
+            if proc is not None and proc.poll() is None:
                 try:
-                    frontend_proc.kill()
+                    if sys.platform == "win32":
+                        proc.send_signal(signal.CTRL_BREAK_EVENT)
+                    else:
+                        proc.terminate()
+                    proc.wait(timeout=5)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
 
 
 if __name__ == "__main__":

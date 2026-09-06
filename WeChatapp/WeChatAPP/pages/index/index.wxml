@@ -1,0 +1,75 @@
+<view class="container">
+  <!-- 顶部欢迎 + 通知 -->
+  <view class="header">
+    <view>
+      <view class="welcome">你好，{{userInfo.name || '同学'}} 👋</view>
+      <view class="welcome-sub">今天也要加油学习哦</view>
+    </view>
+    <view class="notif-btn" bindtap="goNotification">
+      <text class="notif-icon">🔔</text>
+      <view class="notif-badge" wx:if="{{unreadCount > 0}}">{{unreadCount > 99 ? '99+' : unreadCount}}</view>
+    </view>
+  </view>
+
+  <!-- 进行中签到提醒 -->
+  <view class="checkin-banner" wx:if="{{activeSessions.length > 0}}" bindtap="goCheckin">
+    <view class="banner-icon-wrap">
+      <text class="banner-icon">📍</text>
+    </view>
+    <view class="banner-content">
+      <view class="banner-title">有 {{activeSessions.length}} 个签到进行中</view>
+      <view class="banner-sub">点击立即签到 · 过时不候</view>
+    </view>
+    <view class="banner-arrow">›</view>
+  </view>
+
+  <!-- 出勤统计 -->
+  <view class="stat-grid">
+    <view class="stat-card">
+      <view class="stat-label">签到总数</view>
+      <view class="stat-value">{{stats.total}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">正常</view>
+      <view class="stat-value ok">{{stats.detail['正常'] || 0}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">迟到</view>
+      <view class="stat-value late">{{stats.detail['迟到'] || 0}}</view>
+    </view>
+    <view class="stat-card">
+      <view class="stat-label">缺勤</view>
+      <view class="stat-value absent">{{stats.detail['缺勤'] || 0}}</view>
+    </view>
+  </view>
+
+  <!-- 我的课程 -->
+  <view class="card">
+    <view class="card-title">
+      <text>📖 我的课程</text>
+      <text class="course-count">{{courses.length}} 门</text>
+    </view>
+    <block wx:if="{{courses.length > 0}}">
+      <view class="course-item" wx:for="{{courses}}" wx:key="course_id">
+        <view class="course-icon" style="background: {{item.bgColor}};">
+          {{item.iconText}}
+        </view>
+        <view class="course-info">
+          <view class="course-name">{{item.course_name}}</view>
+          <view class="course-meta">{{item.course_id}} · {{item.credit}}学分</view>
+          <view class="course-attend">出勤 {{item.attended}}/{{item.total_sessions}} 次</view>
+        </view>
+        <view class="course-rate">
+          <view class="rate-value">{{item.attendance_pct}}%</view>
+          <view class="rate-bar">
+            <view class="rate-fill" style="width: {{item.attendance_pct}}%"></view>
+          </view>
+        </view>
+      </view>
+    </block>
+    <view class="empty" wx:else>
+      <view class="empty-icon">📭</view>
+      暂无课程
+    </view>
+  </view>
+</view>

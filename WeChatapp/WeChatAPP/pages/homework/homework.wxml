@@ -1,0 +1,27 @@
+<view class="container">
+  <block wx:if="{{homeworkList.length > 0}}">
+    <view class="hw-card" wx:for="{{homeworkList}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
+      <view class="hw-header">
+        <view class="hw-title-wrap">
+          <view class="hw-title">{{item.title}}</view>
+          <view class="hw-lang">{{item.programming_language || '通用'}}</view>
+        </view>
+        <view class="hw-score-wrap {{item.my_best_score !== null ? 'has-score' : ''}}">
+          <text class="hw-score">{{item.score_text}}</text>
+        </view>
+      </view>
+      <view class="hw-meta">
+        <text class="meta-item">📖 {{item.course_name}}</text>
+        <text class="meta-item">💯 满分 {{item.max_score}}</text>
+      </view>
+      <view class="hw-footer">
+        <text class="hw-deadline">⏰ {{item.deadline_text}}</text>
+        <text class="hw-submit-count">已提交 {{item.my_submit_count}} 次 ›</text>
+      </view>
+    </view>
+  </block>
+  <view class="empty" wx:else>
+    <view class="empty-icon">📝</view>
+    暂无作业
+  </view>
+</view>

@@ -1,0 +1,220 @@
+/* app.wxss 全局样式 - 现代设计系统 */
+page {
+  background-color: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #1a1a2e;
+  font-size: 28rpx;
+  line-height: 1.6;
+}
+
+/* ---------- 颜色变量 ---------- */
+:root {
+  --primary: #4f46e5;
+  --primary-light: #818cf8;
+  --primary-dark: #3730a3;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+}
+
+/* ---------- 通用容器 ---------- */
+.container {
+  padding: 24rpx;
+  box-sizing: border-box;
+  min-height: 100vh;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 32rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(0, 0, 0, 0.05);
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ---------- 按钮 ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32rpx;
+  height: 84rpx;
+  border-radius: 14rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  border: none;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.btn::after { border: none; }
+
+.btn-primary {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  color: #ffffff;
+  box-shadow: 0 6rpx 16rpx rgba(79, 70, 229, 0.3);
+}
+
+.btn-outline {
+  background: #ffffff;
+  color: #4f46e5;
+  border: 2rpx solid #c7d2fe;
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #f87171, #ef4444);
+  color: #ffffff;
+  box-shadow: 0 6rpx 16rpx rgba(239, 68, 68, 0.3);
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #34d399, #10b981);
+  color: #ffffff;
+  box-shadow: 0 6rpx 16rpx rgba(16, 185, 129, 0.3);
+}
+
+.btn-block { width: 100%; display: flex; }
+.btn-sm { height: 60rpx; font-size: 24rpx; padding: 0 24rpx; }
+
+/* ---------- 输入框 ---------- */
+.input {
+  background: #f8fafc;
+  border-radius: 14rpx;
+  padding: 22rpx 26rpx;
+  font-size: 28rpx;
+  color: #1a1a2e;
+  width: 100%;
+  box-sizing: border-box;
+  border: 2rpx solid transparent;
+}
+
+.input:focus { border-color: #818cf8; background: #ffffff; }
+
+/* ---------- 标签/徽章 ---------- */
+.badge {
+  display: inline-block;
+  padding: 6rpx 20rpx;
+  border-radius: 24rpx;
+  font-size: 22rpx;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.badge-ok { background: #d1fae5; color: #059669; }
+.badge-late { background: #fef3c7; color: #d97706; }
+.badge-absent { background: #fee2e2; color: #dc2626; }
+.badge-leave { background: #dbeafe; color: #2563eb; }
+.badge-info { background: #e0e7ff; color: #4f46e5; }
+.badge-gray { background: #f1f5f9; color: #64748b; }
+
+/* ---------- 空状态 ---------- */
+.empty {
+  text-align: center;
+  color: #94a3b8;
+  font-size: 26rpx;
+  padding: 80rpx 0;
+}
+
+.empty-icon {
+  font-size: 80rpx;
+  margin-bottom: 16rpx;
+  opacity: 0.5;
+}
+
+/* ---------- 文字颜色 ---------- */
+.text-sub { color: #64748b; font-size: 24rpx; }
+.text-ok { color: #059669; }
+.text-danger { color: #dc2626; }
+.text-primary { color: #4f46e5; }
+.text-muted { color: #94a3b8; }
+
+/* ---------- 统计卡片 ---------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16rpx;
+  margin-bottom: 24rpx;
+}
+
+.stat-card {
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 28rpx 12rpx;
+  text-align: center;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6rpx;
+  background: linear-gradient(90deg, #818cf8, #4f46e5);
+}
+
+.stat-label {
+  font-size: 22rpx;
+  color: #64748b;
+  margin-bottom: 10rpx;
+}
+
+.stat-value {
+  font-size: 44rpx;
+  font-weight: 800;
+  color: #1a1a2e;
+}
+
+.stat-value.ok { color: #059669; }
+.stat-value.late { color: #d97706; }
+.stat-value.absent { color: #dc2626; }
+
+/* ---------- 列表项 ---------- */
+.list-item {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.list-item:last-child { border-bottom: none; }
+
+/* ---------- 分割线 ---------- */
+.divider {
+  height: 1rpx;
+  background: #f1f5f9;
+  margin: 24rpx 0;
+}
+
+/* ---------- flex 工具 ---------- */
+.row { display: flex; align-items: center; gap: 16rpx; }
+.row-wrap { flex-wrap: wrap; }
+.flex-1 { flex: 1; min-width: 0; }
+.text-center { text-align: center; }
+.mt-16 { margin-top: 16rpx; }
+.mt-24 { margin-top: 24rpx; }
+.mb-16 { margin-bottom: 16rpx; }
+.mb-24 { margin-bottom: 24rpx; }
+
+/* ---------- 渐变文字 ---------- */
+.gradient-text {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

@@ -1,0 +1,50 @@
+<view class="container">
+  <view class="card">
+    <view class="card-title">🤖 AI 课程助教</view>
+    <view class="tip-text">选择课程并输入问题，AI 助教将为你解答（匿名提问）</view>
+
+    <view class="form-item">
+      <text class="form-label">选择课程</text>
+      <picker mode="selector" range="{{courses}}" range-key="course_name" value="{{courseIndex}}" bindchange="onCourseChange">
+        <view class="form-input picker-text">
+          {{courses.length ? courses[courseIndex].course_name : '暂无课程'}}
+        </view>
+      </picker>
+    </view>
+
+    <view class="form-item">
+      <text class="form-label">输入问题</text>
+      <textarea
+        class="form-textarea"
+        placeholder="如：指针和数组的关系是什么？"
+        value="{{question}}"
+        bindinput="onQuestionInput"
+        maxlength="500"
+        auto-height
+      />
+    </view>
+
+    <button class="btn btn-primary btn-block" bindtap="onAsk" loading="{{asking}}">
+      提问
+    </button>
+  </view>
+
+  <view class="card" wx:if="{{answer}}">
+    <view class="card-title">💡 回答</view>
+    <view class="answer-box">{{answer}}</view>
+  </view>
+
+  <view class="card" wx:if="{{history.length > 0}}">
+    <view class="card-title">📜 答疑历史</view>
+    <view class="hist-item" wx:for="{{history}}" wx:key="id">
+      <view class="hist-q">
+        <text class="q-badge">Q</text>
+        <text class="q-text">{{item.question}}</text>
+      </view>
+      <view class="hist-a">
+        <text class="a-badge">A</text>
+        <text class="a-text">{{item.answer}}</text>
+      </view>
+    </view>
+  </view>
+</view>

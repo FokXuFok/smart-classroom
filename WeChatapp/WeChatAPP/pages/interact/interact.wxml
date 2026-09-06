@@ -1,0 +1,21 @@
+<view class="container">
+  <block wx:if="{{list.length > 0}}">
+    <view class="interact-card" wx:for="{{list}}" wx:key="id">
+      <view class="interact-header">
+        <text class="type-badge" style="background: {{item.type_color}}1a; color: {{item.type_color}};">
+          {{item.type_text}}
+        </text>
+        <text class="interact-date">{{item.lesson_date}}</text>
+      </view>
+      <view class="interact-course">{{item.course_name}}</view>
+      <view class="interact-content" wx:if="{{item.content}}">{{item.content}}</view>
+      <view class="interact-score" wx:if="{{item.score !== null && item.score !== undefined}}">
+        ⭐ 加分：{{item.score}}
+      </view>
+    </view>
+  </block>
+  <view class="empty" wx:else>
+    <view class="empty-icon">💬</view>
+    暂无互动记录
+  </view>
+</view>

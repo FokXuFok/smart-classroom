@@ -1,0 +1,47 @@
+.interact-card {
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 32rpx;
+  margin-bottom: 20rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.05);
+  border-left: 6rpx solid #4f46e5;
+}
+
+.interact-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14rpx;
+}
+
+.type-badge {
+  font-size: 22rpx;
+  padding: 6rpx 20rpx;
+  border-radius: 24rpx;
+  font-weight: 600;
+}
+
+.interact-date {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+.interact-course {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 10rpx;
+}
+
+.interact-content {
+  font-size: 26rpx;
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.interact-score {
+  margin-top: 14rpx;
+  font-size: 26rpx;
+  color: #f59e0b;
+  font-weight: 700;
+}

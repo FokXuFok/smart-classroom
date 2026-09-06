@@ -1,0 +1,93 @@
+<view class="container">
+  <!-- 进行中签到 -->
+  <view class="card">
+    <view class="card-title">
+      <text>📍 进行中签到</text>
+      <text class="count-badge" wx:if="{{activeSessions.length > 0}}">{{activeSessions.length}}</text>
+    </view>
+    <block wx:if="{{activeSessions.length > 0}}">
+      <picker mode="selector" range="{{activeSessions}}" range-key="course_name" value="{{selectedSessionId}}" bindchange="onSessionChange">
+        <view class="session-select">
+          <view class="session-left">
+            <text class="session-name">{{selectedSession.course_name}}</text>
+            <text class="session-meta">范围 {{selectedSession.range_meters}}米 · {{selectedSession.duration_minutes}}分钟</text>
+          </view>
+          <view class="countdown {{remainingText === '已结束' ? 'ended' : ''}}">
+            <text class="countdown-num">{{remainingText}}</text>
+          </view>
+        </view>
+      </picker>
+
+      <view class="action-row">
+        <button class="btn btn-primary flex-1" bindtap="onCameraCheckin" loading="{{submitting}}">
+          📷 摄像头签到
+        </button>
+        <button class="btn btn-outline flex-1" bindtap="onDemoCheckin" loading="{{submitting}}">
+          演示签到
+        </button>
+      </view>
+      <view class="apply-link" bindtap="onOpenApply" data-id="{{selectedSessionId}}">
+        无法签到？申请请假/补签 →
+      </view>
+    </block>
+    <view class="empty" wx:else>
+      <view class="empty-icon">⏰</view>
+      暂无进行中的签到
+    </view>
+  </view>
+
+  <!-- 人脸注册 -->
+  <view class="card">
+    <view class="card-title">📸 人脸注册</view>
+    <view class="text-sub" style="margin-bottom: 20rpx;">
+      首次使用人脸签到前需注册人脸模板。点击下方按钮拍照，系统将提取您的面部特征并保存。
+    </view>
+    <button class="btn btn-outline btn-block" bindtap="onFaceRegister" loading="{{registering}}">
+      拍照注册人脸
+    </button>
+  </view>
+
+  <!-- 签到历史 -->
+  <view class="card">
+    <view class="card-title">📋 签到历史</view>
+    <block wx:if="{{history.length > 0}}">
+      <view class="history-item" wx:for="{{history}}" wx:key="id">
+        <view class="history-icon">{{item.status === 1 ? '✅' : item.status === 2 ? '⚠️' : item.status === 4 ? '📝' : '❌'}}</view>
+        <view class="history-main">
+          <view class="history-course">{{item.course_name}}</view>
+          <view class="history-meta">{{item.attendance_date}} · {{item.check_in_time}}</view>
+        </view>
+        <view class="history-status">
+          <text class="badge badge-ok" wx:if="{{item.status === 1}}">正常</text>
+          <text class="badge badge-late" wx:elif="{{item.status === 2}}">迟到</text>
+          <text class="badge badge-absent" wx:elif="{{item.status === 0}}">缺勤</text>
+          <text class="badge badge-leave" wx:elif="{{item.status === 4}}">请假</text>
+          <text class="badge badge-gray" wx:else>{{item.status_cn}}</text>
+        </view>
+      </view>
+    </block>
+    <view class="empty" wx:else>
+      <view class="empty-icon">📭</view>
+      暂无签到记录
+    </view>
+  </view>
+
+  <!-- 请假弹窗 -->
+  <view class="modal-mask" wx:if="{{showApply}}" bindtap="onCancelApply">
+    <view class="modal-box" catchtap="">
+      <view class="modal-title">请假 / 补签申请</view>
+      <view class="form-label">请说明理由</view>
+      <textarea
+        class="form-textarea"
+        placeholder="如：身体不适请假 / 网络问题未能及时签到等"
+        value="{{applyReason}}"
+        bindinput="onApplyReasonInput"
+        maxlength="200"
+      />
+      <view class="modal-actions">
+        <button class="btn btn-outline flex-1" bindtap="onCancelApply">取消</button>
+        <button class="btn btn-primary flex-1" bindtap="onSubmitApply">提交申请</button>
+      </view>
+    </view>
+  </view>
+</view>

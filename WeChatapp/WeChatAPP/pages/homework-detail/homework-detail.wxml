@@ -1,0 +1,92 @@
+<view class="container" wx:if="{{hw}}">
+  <!-- 作业信息 -->
+  <view class="card">
+    <view class="hw-title">{{hw.title}}</view>
+    <view class="hw-meta-row">
+      <text class="meta-tag">{{hw.course_name}}</text>
+      <text class="meta-tag lang-tag">{{hw.programming_language}}</text>
+      <text class="meta-tag">满分 {{hw.max_score}}</text>
+    </view>
+    <view class="hw-deadline-line">⏰ 截止：{{hw.deadline_text}}</view>
+
+    <view class="divider"></view>
+
+    <view class="section-title">📝 题目描述</view>
+    <view class="hw-desc">{{hw.description || '无描述'}}</view>
+
+    <view wx:if="{{hw.test_cases.length > 0}}">
+      <view class="section-title">🧪 测试用例</view>
+      <view class="case-item" wx:for="{{hw.test_cases}}" wx:key="id">
+        <view class="case-header">
+          <text class="case-name">{{item.name}}</text>
+          <text class="case-weight">权重 {{item.score_weight}}</text>
+        </view>
+        <block wx:if="{{item.is_public}}">
+          <view class="case-io">
+            <text class="io-label">输入：</text>
+            <text class="io-value">{{item.test_input}}</text>
+          </view>
+          <view class="case-io">
+            <text class="io-label">期望：</text>
+            <text class="io-value">{{item.expected_output}}</text>
+          </view>
+        </block>
+        <view wx:else class="case-hidden">🔒 隐藏用例（提交后评测）</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 代码提交 -->
+  <view class="card">
+    <view class="card-title">💻 提交代码</view>
+    <textarea
+      class="code-editor"
+      placeholder="在此输入代码..."
+      value="{{code}}"
+      bindinput="onCodeInput"
+      maxlength="-1"
+      auto-height
+    />
+    <button class="btn btn-primary btn-block mt-16" bindtap="onSubmit" loading="{{submitting}}">
+      提交评测
+    </button>
+  </view>
+
+  <!-- 提交历史 -->
+  <view class="card">
+    <view class="card-title" bindtap="toggleHistory">
+      <text>📊 我的提交记录（{{submissions.length}}）</text>
+      <text class="toggle-arrow">{{showHistory ? '收起 ▲' : '展开 ▼'}}</text>
+    </view>
+    <block wx:if="{{showHistory && submissions.length > 0}}">
+      <view class="sub-item" wx:for="{{submissions}}" wx:key="id">
+        <view class="sub-header">
+          <text class="sub-time">{{item.submit_time}}</text>
+          <text class="badge badge-ok" wx:if="{{item.status === 1}}">已评测</text>
+          <text class="badge badge-info" wx:elif="{{item.status === 2}}">已批改</text>
+          <text class="badge badge-late" wx:else>待评测</text>
+        </view>
+        <view class="sub-score">
+          得分：<text class="score-num" wx:if="{{item.score !== null}}">{{item.score}} / {{hw.max_score}}</text>
+          <text class="score-num pending" wx:else>评测中…</text>
+        </view>
+
+        <view wx:if="{{item.compile_error}}" class="sub-error">
+          ⚠️ 编译错误：{{item.compile_error}}
+        </view>
+
+        <view wx:if="{{item.ai_feedback}}" class="ai-feedback">
+          <view class="ai-feedback-title">🤖 AI 反馈</view>
+          <view class="ai-feedback-content">{{item.ai_feedback}}</view>
+        </view>
+        <view wx:elif="{{item.ai_feedback_hint}}" class="ai-hint">
+          {{item.ai_feedback_hint}}
+        </view>
+      </view>
+    </block>
+    <view class="empty" wx:elif="{{showHistory}}">
+      <view class="empty-icon">📭</view>
+      暂无提交记录
+    </view>
+  </view>
+</view>

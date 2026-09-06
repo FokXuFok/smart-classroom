@@ -1,0 +1,67 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/index/index",
+    "pages/checkin/checkin",
+    "pages/homework/homework",
+    "pages/homework-detail/homework-detail",
+    "pages/ai/ai",
+    "pages/interact/interact",
+    "pages/notification/notification",
+    "pages/profile/profile"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#4f46e5",
+    "navigationBarTitleText": "智慧课堂",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f0f2f5"
+  },
+  "tabBar": {
+    "color": "#94a3b8",
+    "selectedColor": "#4f46e5",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "images/tab/home.png",
+        "selectedIconPath": "images/tab/home-active.png"
+      },
+      {
+        "pagePath": "pages/checkin/checkin",
+        "text": "签到",
+        "iconPath": "images/tab/checkin.png",
+        "selectedIconPath": "images/tab/checkin-active.png"
+      },
+      {
+        "pagePath": "pages/homework/homework",
+        "text": "作业",
+        "iconPath": "images/tab/homework.png",
+        "selectedIconPath": "images/tab/homework-active.png"
+      },
+      {
+        "pagePath": "pages/ai/ai",
+        "text": "AI答疑",
+        "iconPath": "images/tab/ai.png",
+        "selectedIconPath": "images/tab/ai-active.png"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的",
+        "iconPath": "images/tab/profile.png",
+        "selectedIconPath": "images/tab/profile-active.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents",
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于签到时的地理围栏校验，确认您在签到范围内"
+    }
+  },
+  "requiredPrivateInfos": ["getLocation", "chooseLocation"]
+}

@@ -1,0 +1,92 @@
+<view class="login-page">
+  <view class="login-bg">
+    <view class="deco deco-1"></view>
+    <view class="deco deco-2"></view>
+    <view class="logo-wrap">
+      <view class="logo-circle">
+        <text class="logo-emoji">📚</text>
+      </view>
+      <view class="app-name">智慧课堂</view>
+      <view class="app-sub">Smart Classroom · 学生端</view>
+    </view>
+  </view>
+
+  <view class="login-card">
+    <view class="card-header">
+      <view class="card-title">欢迎回来</view>
+      <view class="card-sub">登录以继续使用</view>
+    </view>
+
+    <view class="form-item">
+      <text class="form-label">学号</text>
+      <view class="input-wrap">
+        <text class="input-icon">👤</text>
+        <input
+          class="form-input"
+          placeholder="请输入学号"
+          value="{{username}}"
+          bindinput="onUsernameInput"
+          confirm-type="next"
+        />
+      </view>
+    </view>
+
+    <view class="form-item">
+      <text class="form-label">密码</text>
+      <view class="input-wrap">
+        <text class="input-icon">🔒</text>
+        <input
+          class="form-input"
+          placeholder="请输入密码"
+          password
+          value="{{password}}"
+          bindinput="onPasswordInput"
+          confirm-type="done"
+          bindconfirm="onLogin"
+        />
+      </view>
+    </view>
+
+    <button class="btn btn-primary btn-block login-btn" bindtap="onLogin" loading="{{loading}}">
+      登 录
+    </button>
+
+    <view class="register-link" bindtap="onShowRegister">还没有账号？立即注册</view>
+  </view>
+
+  <view class="footer-tip">
+    <text>演示账号：2024001~2024004 / 123456</text>
+  </view>
+
+  <!-- 注册弹窗 -->
+  <view class="modal-mask" wx:if="{{showRegister}}" bindtap="onCancelRegister">
+    <view class="modal-box" catchtap="">
+      <view class="modal-title">学生注册</view>
+      <view class="form-item">
+        <text class="form-label">姓名</text>
+        <input class="form-input" placeholder="请输入姓名" value="{{regName}}" bindinput="onRegNameInput" />
+      </view>
+      <view class="form-item">
+        <text class="form-label">学号</text>
+        <input class="form-input" placeholder="请输入学号" value="{{regUsername}}" bindinput="onRegUsernameInput" />
+      </view>
+      <view class="form-item">
+        <text class="form-label">密码</text>
+        <input class="form-input" placeholder="至少6位" password value="{{regPassword}}" bindinput="onRegPasswordInput" />
+      </view>
+      <view class="form-item">
+        <text class="form-label">班级</text>
+        <picker mode="selector" range="{{classOptions}}" range-key="class_name" value="{{classIndex}}" bindchange="onClassChange">
+          <view class="form-input picker-text">
+            {{classIndex >= 0 ? classOptions[classIndex].class_name : '请选择班级'}}
+          </view>
+        </picker>
+      </view>
+      <view class="modal-actions">
+        <button class="btn btn-outline flex-1" bindtap="onCancelRegister">取消</button>
+        <button class="btn btn-primary flex-1" bindtap="onRegister" loading="{{loading}}">提交注册</button>
+      </view>
+      <view class="form-tip">注册后需管理员审核通过方可登录</view>
+    </view>
+  </view>
+</view>

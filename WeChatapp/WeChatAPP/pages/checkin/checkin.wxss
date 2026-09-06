@@ -1,0 +1,163 @@
+.count-badge {
+  background: #4f46e5;
+  color: #ffffff;
+  font-size: 22rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 20rpx;
+  font-weight: 500;
+}
+
+.session-select {
+  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+  border-radius: 20rpx;
+  padding: 28rpx 24rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 2rpx solid #e0e7ff;
+}
+
+.session-left {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-name {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1a1a2e;
+  display: block;
+  margin-bottom: 6rpx;
+}
+
+.session-meta {
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.countdown {
+  text-align: center;
+  padding: 12rpx 24rpx;
+  background: #ffffff;
+  border-radius: 16rpx;
+  box-shadow: 0 2rpx 12rpx rgba(79, 70, 229, 0.1);
+}
+
+.countdown-num {
+  font-size: 36rpx;
+  font-weight: 800;
+  color: #4f46e5;
+  font-family: 'Courier New', monospace;
+}
+
+.countdown.ended .countdown-num {
+  color: #94a3b8;
+  font-size: 26rpx;
+}
+
+.action-row {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 24rpx;
+}
+
+.apply-link {
+  text-align: center;
+  font-size: 24rpx;
+  color: #4f46e5;
+  margin-top: 20rpx;
+  font-weight: 500;
+}
+
+/* 历史记录 */
+.history-item {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 0;
+  border-bottom: 1rpx solid #f1f5f9;
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-icon {
+  font-size: 36rpx;
+  margin-right: 16rpx;
+  width: 48rpx;
+  text-align: center;
+}
+
+.history-main {
+  flex: 1;
+}
+
+.history-course {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 6rpx;
+}
+
+.history-meta {
+  font-size: 24rpx;
+  color: #94a3b8;
+}
+
+/* 弹窗 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(8rpx);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40rpx;
+}
+
+.modal-box {
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 44rpx;
+  width: 100%;
+  max-width: 640rpx;
+  animation: modalIn 0.25s ease-out;
+}
+
+@keyframes modalIn {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.modal-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 24rpx;
+  text-align: center;
+}
+
+.form-label {
+  font-size: 26rpx;
+  color: #64748b;
+  margin-bottom: 12rpx;
+}
+
+.form-textarea {
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  font-size: 28rpx;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 160rpx;
+  margin-bottom: 24rpx;
+  border: 2rpx solid #e2e8f0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 20rpx;
+}
