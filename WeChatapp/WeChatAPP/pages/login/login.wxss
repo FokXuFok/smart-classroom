@@ -162,6 +162,62 @@
   color: #94a3b8;
 }
 
+/* ---------- 服务器设置 ---------- */
+.server-settings {
+  margin-top: 12rpx;
+  border-top: 2rpx solid #f1f5f9;
+  padding-top: 20rpx;
+}
+
+.server-toggle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 26rpx;
+  color: #64748b;
+  padding: 8rpx 0;
+}
+
+.server-toggle-text {
+  color: #4f46e5;
+  font-weight: 500;
+}
+
+.server-toggle-arrow {
+  margin-left: 8rpx;
+  color: #94a3b8;
+  font-size: 22rpx;
+}
+
+.server-panel {
+  margin-top: 20rpx;
+  background: #f8fafc;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  border: 2rpx solid #e2e8f0;
+}
+
+.server-current {
+  font-size: 22rpx;
+  color: #94a3b8;
+  word-break: break-all;
+  margin-bottom: 20rpx;
+}
+
+.server-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 8rpx;
+}
+
+.server-tip {
+  font-size: 22rpx;
+  color: #475569;
+  margin-top: 16rpx;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
 /* ---------- 注册弹窗 ---------- */
 .modal-mask {
   position: fixed;

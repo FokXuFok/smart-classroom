@@ -52,6 +52,35 @@
     </button>
 
     <view class="register-link" bindtap="onShowRegister">还没有账号？立即注册</view>
+
+    <!-- 服务器设置（换网/USB 共享后 IP 变化时使用） -->
+    <view class="server-settings">
+      <view class="server-toggle" bindtap="onToggleServer">
+        <text class="server-toggle-text">⚙ 服务器设置</text>
+        <text class="server-toggle-arrow">{{showServer ? '收起 ▲' : '展开 ▼'}}</text>
+      </view>
+      <view class="server-panel" wx:if="{{showServer}}">
+        <view class="server-current">当前地址：{{currentServer}}</view>
+        <view class="form-item">
+          <text class="form-label">服务器地址</text>
+          <view class="input-wrap">
+            <input
+              class="form-input"
+              placeholder="http://192.168.1.5:8080"
+              value="{{serverInput}}"
+              bindinput="onServerInput"
+            />
+          </view>
+        </view>
+        <view class="server-actions">
+          <button class="btn btn-outline flex-1" bindtap="onAutoDetect" loading="{{detecting}}">
+            自动检测
+          </button>
+          <button class="btn btn-outline flex-1" bindtap="onSaveServer">保存地址</button>
+        </view>
+        <view class="server-tip" wx:if="{{detectMsg}}">{{detectMsg}}</view>
+      </view>
+    </view>
   </view>
 
   <view class="footer-tip">

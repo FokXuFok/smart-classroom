@@ -101,9 +101,11 @@ function request(path, options) {
         reject({ code: body.code, message: body.message || '请求失败' })
       },
       fail: (err) => {
+        // 附上微信真实 errMsg（如 url not in domain list / connect fail），便于真机排障
+        const detail = (err && err.errMsg) ? ' [真实错误:' + err.errMsg + ']' : ''
         reject({
           code: -1,
-          message: '无法连接服务器，请确认后端已启动（' + config.API_BASE + '）',
+          message: '无法连接服务器，请确认后端已启动（' + config.API_BASE + '）' + detail,
         })
       },
     })

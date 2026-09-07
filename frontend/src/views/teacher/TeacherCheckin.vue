@@ -27,14 +27,15 @@
           <span class="unit">米</span>
         </el-form-item>
         <el-form-item label="签到定位">
-          <el-button :loading="geo.loading" @click="locate">采集定位</el-button>
+          <el-button :loading="geoLoading" @click="locate">采集定位</el-button>
+          <el-button @click="mapVisible = true">地图选点</el-button>
           <span v-if="form.lat && form.lng" class="coord">
             {{ form.lat.toFixed(6) }}, {{ form.lng.toFixed(6) }}
           </span>
           <el-checkbox v-model="useDefault" class="default-check">
             使用默认坐标(定位不可用时)
           </el-checkbox>
-          <div v-if="geo.error" class="error-text">{{ geo.error }}</div>
+          <div v-if="geoError" class="error-text">{{ geoError }}</div>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="starting" @click="onStart">
@@ -84,6 +85,14 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 地图选点 -->
+    <MapPicker
+      v-model="mapVisible"
+      :init-lat="form.lat ?? undefined"
+      :init-lng="form.lng ?? undefined"
+      @picked="onMapPicked"
+    />
   </div>
 </template>
 
@@ -92,12 +101,13 @@ import { ref, reactive, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { teacherApi } from '@/api/teacher';
-import { useGeolocation } from '@/composables/useGeolocation';
+import { useGeolocation, ACCURACY_LIMIT_M } from '@/composables/useGeolocation';
+import MapPicker from '@/components/MapPicker.vue';
 import { fmtTime } from '@/utils/format';
 import type { Course, CheckinSession } from '@/api/types';
 
 const router = useRouter();
-const geo = useGeolocation();
+const { loading: geoLoading, error: geoError, getPosition } = useGeolocation();
 
 const courses = ref<Course[]>([]);
 const coursesLoading = ref(false);
@@ -106,6 +116,7 @@ const sessionsLoading = ref(false);
 const starting = ref(false);
 const endingId = ref<number | null>(null);
 const useDefault = ref(false);
+const mapVisible = ref(false);
 
 const form = reactive({
   course_id: '',
@@ -114,6 +125,16 @@ const form = reactive({
   lat: undefined as number | undefined,
   lng: undefined as number | undefined,
 });
+
+// 地图选点成功 → 使用该坐标，关闭"默认坐标"兜底
+function onMapPicked(pos: { lat: number; lng: number }) {
+  form.lat = pos.lat;
+  form.lng = pos.lng;
+  useDefault.value = false;
+  ElMessage.success(
+    `已选点: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}，将作为签到中心`,
+  );
+}
 
 async function loadCourses() {
   coursesLoading.value = true;
@@ -138,16 +159,24 @@ async function loadSessions() {
 }
 
 async function locate() {
-  const pos = await geo.getPosition();
+  const pos = await getPosition();
   if (pos) {
+    if (pos.accuracy > ACCURACY_LIMIT_M) {
+      // IP 定位等低精度源：坐标误差可达公里级，不能作为围栏基准
+      useDefault.value = true;
+      ElMessage.warning(
+        `定位精度不足(${Math.round(pos.accuracy)}m),本次将使用默认坐标`,
+      );
+      return;
+    }
     form.lat = pos.lat;
     form.lng = pos.lng;
     useDefault.value = false;
     ElMessage.success(
-      `定位成功: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`,
+      `定位成功: ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (精度${Math.round(pos.accuracy)}m)`,
     );
   } else {
-    ElMessage.warning(geo.error.value || '定位失败,将使用默认坐标');
+    ElMessage.warning(geoError.value || '定位失败,将使用默认坐标');
   }
 }
 
@@ -159,13 +188,17 @@ async function onStart() {
   // 未勾选默认坐标但没采集到定位 → 自动先尝试采集
   if (!useDefault.value && !form.lat && !form.lng) {
     ElMessage.info('正在自动采集定位…');
-    const pos = await geo.getPosition();
-    if (pos) {
+    const pos = await getPosition();
+    if (pos && pos.accuracy <= ACCURACY_LIMIT_M) {
       form.lat = pos.lat;
       form.lng = pos.lng;
     } else {
-      useDefault.value = true; // 采集失败自动降级默认坐标
-      ElMessage.warning(geo.error.value || '定位失败,本次使用默认坐标');
+      useDefault.value = true; // 采集失败或精度不足自动降级默认坐标
+      ElMessage.warning(
+        pos
+          ? `定位精度不足(${Math.round(pos.accuracy)}m),本次使用默认坐标`
+          : geoError.value || '定位失败,本次使用默认坐标',
+      );
     }
   }
   const lat = useDefault.value ? undefined : form.lat;

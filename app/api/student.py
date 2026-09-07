@@ -310,13 +310,47 @@ def submit_checkin(
             f"指纹核验未通过：{fp.get('message', '未知原因')}",
         )
 
-    # 9) 两帧活体（可选；演示模式无真实照片，直接判通过）
-    if not demo_mode and req.image_b64_2:
+    # 9) 两帧活体（非演示模式且提供第二帧时强制校验：未通过则转人工复核）
+    if demo_mode:
+        live = {"passed": True, "note": "演示模式"}
+        is_live = 1
+    elif req.image_b64_2:
         live = eng.liveness_two_frames(req.image_b64, req.image_b64_2)
         is_live = 1 if live.get("passed") else 0
+        if not live.get("passed"):
+            db.add(
+                AttendanceRecord(
+                    course_id=session.course_id,
+                    student_id=sno,
+                    attendance_date=datetime.date.today(),
+                    status=0,
+                    check_in_time=now,
+                    check_in_type=1,
+                    location=f"{req.lat},{req.lng}",
+                    similarity1=round(float(sim), 4),
+                    is_liveness_passed=0,
+                    session_id=session.id,
+                    review_status=1,
+                    review_remark=f"活体校验未通过：{live.get('reason', '未知')}，待人工复核",
+                )
+            )
+            db.commit()
+            logger.warning(
+                "签到转人工复核(活体未通过) student=%s session=%s course=%s reason=%s",
+                sno, session.id, session.course_id, live.get("reason"),
+            )
+            checkin_bus.publish(
+                session.id,
+                {
+                    "type": "review",
+                    "student_no": sno,
+                    "name": student.name,
+                    "reason": f"活体校验未通过：{live.get('reason', '未知')}，待人工复核",
+                },
+            )
+            raise BizError(2007, f"活体校验未通过：{live.get('reason', '未知')}，已提交人工复核")
     else:
-        note = "演示模式" if demo_mode else "未采集第二帧"
-        live = {"passed": True, "note": note}
+        live = {"passed": True, "note": "未采集第二帧"}
         is_live = 1
 
     # 10) 正常 / 迟到

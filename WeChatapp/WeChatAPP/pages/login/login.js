@@ -1,5 +1,7 @@
 // pages/login/login.js
 const { post } = require('../../utils/request')
+const { detectServer } = require('../../utils/server')
+const config = require('../../config')
 const app = getApp()
 
 Page({
@@ -15,6 +17,12 @@ Page({
     regClassId: '',
     classOptions: [],
     classIndex: -1,
+    // 服务器设置
+    showServer: false,
+    currentServer: '',
+    serverInput: '',
+    detecting: false,
+    detectMsg: '',
   },
 
   onLoad() {
@@ -22,6 +30,9 @@ Page({
     if (wx.getStorageSync('userInfo')) {
       wx.switchTab({ url: '/pages/index/index' })
     }
+    // 显示当前生效的服务器地址
+    const base = config.API_BASE
+    this.setData({ currentServer: base, serverInput: base })
   },
 
   onUsernameInput(e) {
@@ -30,6 +41,54 @@ Page({
 
   onPasswordInput(e) {
     this.setData({ password: e.detail.value })
+  },
+
+  // ---------- 服务器设置 ----------
+  onToggleServer() {
+    this.setData({ showServer: !this.data.showServer })
+  },
+
+  onServerInput(e) {
+    this.setData({ serverInput: e.detail.value })
+  },
+
+  onSaveServer() {
+    const url = (this.data.serverInput || '').trim().replace(/\/+$/, '')
+    if (!/^https?:\/\/[\d.A-Za-z-]+(:\d+)?$/.test(url)) {
+      wx.showModal({
+        title: '地址格式不对',
+        content: '请输入完整地址，例如 http://10.90.193.20:8080',
+        showCancel: false,
+      })
+      return
+    }
+    config.setApiBase(url)
+    this.setData({ currentServer: url, detectMsg: '✅ 已保存：' + url })
+    wx.showToast({ title: '服务器地址已保存', icon: 'success' })
+  },
+
+  async onAutoDetect() {
+    this.setData({ detecting: true, detectMsg: '正在检测可用服务器…' })
+    try {
+      const found = await detectServer({
+        onProgress: (i, total, url) => {
+          this.setData({ detectMsg: '正在检测 ' + i + '/' + total + '：' + url })
+        },
+      })
+      if (found) {
+        this.setData({
+          currentServer: found,
+          serverInput: found,
+          detectMsg: '✅ 已找到服务器：' + found,
+        })
+      } else {
+        this.setData({ detectMsg: '❌ 未找到可用服务器，请检查后端是否启动、手机与电脑是否同一网络' })
+      }
+    } catch (e) {
+      this.setData({ detectMsg: '❌ 检测异常：' + (e && e.message ? e.message : '未知错误') })
+    } finally {
+      this.setData({ detecting: false })
+    }
   },
 
   async onLogin() {
@@ -60,7 +119,12 @@ Page({
         wx.switchTab({ url: '/pages/index/index' })
       }, 500)
     } catch (e) {
-      wx.showToast({ title: e.message || '登录失败', icon: 'none' })
+      // 用模态框显示完整错误（toast 会截断长文本）
+      wx.showModal({
+        title: '登录失败',
+        content: e.message || '登录失败',
+        showCancel: false,
+      })
     } finally {
       this.setData({ loading: false })
     }

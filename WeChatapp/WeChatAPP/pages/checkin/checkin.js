@@ -4,11 +4,13 @@ const { chooseImageToBase64 } = require('../../utils/image')
 const config = require('../../config')
 const app = getApp()
 
+// 签到向导步骤：idle → fingerprint(指纹) → face(人脸+活体) → ready(可提交)
 Page({
   data: {
     activeSessions: [],
     selectedSessionId: null,
     selectedSession: null,
+    selectedIndex: 0,
     remainingText: '',
     history: [],
     submitting: false,
@@ -16,16 +18,25 @@ Page({
     showApply: false,
     applyReason: '',
     applySessionId: null,
-    // 三重签到进度
-    faceChecked: false,       // 人脸已采集
-    geoChecked: false,        // 定位已采集
-    fingerprintChecked: false, // 指纹已通过
-    faceImg: null,            // 第一帧 base64
-    faceImg2: null,           // 第二帧 base64（活体）
+
+    // ===== 签到向导状态 =====
+    flowStep: 'idle',            // idle | fingerprint | face | ready
+    // 指纹因子
+    fingerprintChecked: false,
+    fingerprintData: null,       // "<json>|<sig>"
+    // 人脸因子（活体：两帧）
+    faceChecked: false,
+    faceImg: null,               // 第一帧 base64
+    faceImg2: null,              // 第二帧 base64（活体）
+    // 定位因子（点击开始签到时后台并行获取）
     lat: null,
     lng: null,
-    fingerprintData: null,   // 指纹数据 "<json>|<sig>"
-    stepStatus: '',          // 当前流程提示
+    geoAccuracy: null,           // 定位精度（米）
+    geoState: 'pending',         // pending | ok | fallback(回退教师坐标)
+    geoText: '',                 // 定位展示文本（WXML 不支持 toFixed，预算好）
+    // 流程提示
+    stepStatus: '',
+    stepTitle: '',
   },
 
   _timer: null,
@@ -86,96 +97,138 @@ Page({
         ...s,
         course_name: names[s.course_id] || s.course_id,
       }))
-      this.setData({
+      const patch = {
         activeSessions: sessions,
-        selectedSessionId: sessions.length ? sessions[0].id : null,
-        selectedSession: sessions.length ? sessions[0] : null,
         history: (history || []).map((r) => ({
           ...r,
           course_name: names[r.course_id] || r.course_id,
         })),
-      })
+      }
+      // 仅在无进行中签到或会话失效时改选中项；不动已开始向导的因子状态
+      if (!this.data.selectedSession) {
+        patch.selectedIndex = sessions.length ? 0 : 0
+        patch.selectedSessionId = sessions.length ? sessions[0].id : null
+        patch.selectedSession = sessions.length ? sessions[0] : null
+      }
+      this.setData(patch)
       this._startCountdown()
-      this._resetThreeFactor() // 切换会话时重置三重因子
     } catch (e) {
       // request 已统一提示
     }
   },
 
-  // 切换会话或开始新一轮签到时重置
-  _resetThreeFactor() {
+  // 重置向导为初始态（开始新签到 / 切换会话 / 签到成功后调用）
+  _resetFlow() {
     this.setData({
-      faceChecked: false,
-      geoChecked: false,
+      flowStep: 'idle',
       fingerprintChecked: false,
+      fingerprintData: null,
+      faceChecked: false,
       faceImg: null,
       faceImg2: null,
       lat: null,
       lng: null,
-      fingerprintData: null,
+      geoAccuracy: null,
+      geoText: '',
+      geoState: 'pending',
       stepStatus: '',
+      stepTitle: '',
     })
   },
 
   onSessionChange(e) {
     const idx = Number(e.detail.value)
     const s = this.data.activeSessions[idx]
-    this.setData({ selectedSessionId: s.id, selectedSession: s })
+    if (!s) return
+    // 切换会话：如果正在向导中先提醒
+    if (this.data.flowStep !== 'idle') {
+      wx.showModal({
+        title: '正在签到流程中',
+        content: '切换课程会重置当前签到进度，确认切换吗？',
+        confirmText: '切换',
+        success: (res) => {
+          if (res.confirm) {
+            this._resetFlow()
+            this.setData({ selectedSessionId: s.id, selectedSession: s, selectedIndex: idx })
+            this._startCountdown()
+          }
+        },
+      })
+      return
+    }
+    this.setData({ selectedSessionId: s.id, selectedSession: s, selectedIndex: idx })
     this._startCountdown()
-    this._resetThreeFactor()
   },
 
-  // ============ 三重签到：人脸采集 ============
-  async onCaptureFace() {
-    try {
-      const img = await chooseImageToBase64(true)
-      this.setData({
-        faceImg: img,
-        faceChecked: true,
-        stepStatus: '✅ 人脸已采集，请继续定位',
-      })
-    } catch (e) {
-      if (!e.cancelled) {
-        wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
-      }
-    }
-  },
-
-  // ============ 三重签到：定位采集 ============
-  async onCaptureGeo() {
+  // ============ 开始签到：定位后台并行 + 指纹第一步 ============
+  async onStartCheckin() {
     const { selectedSession } = this.data
+    if (!selectedSession) {
+      wx.showToast({ title: '暂无进行中的签到', icon: 'none' })
+      return
+    }
+    if (selectedSession.remaining_seconds <= 0) {
+      wx.showToast({ title: '签到已结束', icon: 'none' })
+      return
+    }
+    this._resetFlow()
+    this.setData({
+      flowStep: 'fingerprint',
+      stepTitle: '第 1 步 / 共 3 步 · 指纹验证',
+      stepStatus: '正在唤起指纹…',
+    })
+    // 定位与指纹并行：点击"开始签到"即开始获取定位（不阻塞流程）
+    this._startGeoOnce()
+    // 自动唤起指纹验证
+    this.onCaptureFingerprint()
+  },
+
+  // 点击开始签到后自动获取一次定位（后台并行，不打断指纹流程）
+  _startGeoOnce() {
     try {
-      this.setData({ stepStatus: '正在获取定位…' })
-      const loc = await new Promise((resolve, reject) => {
-        wx.getLocation({
-          type: 'gcj02',
-          isHighAccuracy: true,
-          success: resolve,
-          fail: reject,
-        })
-      })
-      this.setData({
-        lat: loc.latitude,
-        lng: loc.longitude,
-        geoChecked: true,
-        stepStatus: `✅ 定位成功：${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`,
+      wx.getLocation({
+        type: 'gcj02',
+        isHighAccuracy: true,
+        success: (loc) => {
+          this.setData({
+            lat: loc.latitude,
+            lng: loc.longitude,
+            geoAccuracy: loc.accuracy || null,
+            geoState: 'ok',
+            geoText: `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}` +
+              (loc.accuracy ? `（精度${Math.round(loc.accuracy)}m）` : ''),
+          })
+          console.log(
+            '[签到] 学生定位成功:', loc.latitude, loc.longitude,
+            '精度=', loc.accuracy || '未知', 'm',
+          )
+        },
+        fail: (err) => {
+          // 定位失败：回退教师坐标，围栏校验由后端判定（仅提示，不弹窗打断）
+          console.warn('[签到] 学生定位失败:', err && err.errMsg)
+          const s = this.data.selectedSession
+          if (s) {
+            this.setData({
+              lat: s.teacher_lat,
+              lng: s.teacher_lng,
+              geoState: 'fallback',
+            })
+          }
+        },
       })
     } catch (e) {
-      // 定位失败时回退教师坐标，允许继续签到（围栏校验由后端做）
-      if (selectedSession) {
+      const s = this.data.selectedSession
+      if (s) {
         this.setData({
-          lat: selectedSession.teacher_lat,
-          lng: selectedSession.teacher_lng,
-          geoChecked: true,
-          stepStatus: '⚠️ 定位失败，使用教师坐标（围栏校验由后端判定）',
+          lat: s.teacher_lat,
+          lng: s.teacher_lng,
+          geoState: 'fallback',
         })
-      } else {
-        this.setData({ stepStatus: '❌ 定位失败，请检查权限' })
       }
     }
   },
 
-  // ============ 三重签到：指纹采集（微信 SOTER） ============
+  // ============ 第 1 步：指纹验证（微信 SOTER） ============
   async onCaptureFingerprint() {
     this.setData({ stepStatus: '正在唤起指纹…' })
     try {
@@ -188,16 +241,18 @@ Page({
       })
       const modes = support.supportMode || []
       if (!modes.includes('fingerPrint')) {
-        // 设备不支持指纹 → 直接标记通过（后端会接受 fingerprint=null 但记录为"设备不支持"）
+        // 设备不支持指纹 → 演示/模拟器环境：标记跳过并提示（后端允许 fingerprint=null）
         this.setData({
           fingerprintChecked: true,
           fingerprintData: null,
-          stepStatus: '⚠️ 设备不支持指纹，跳过指纹因子',
+          flowStep: 'face',
+          stepTitle: '第 2 步 / 共 3 步 · 人脸识别（活体）',
+          stepStatus: '⚠️ 设备不支持指纹，已跳过（仅演示环境）',
         })
         return
       }
 
-      // 2) 检查是否录入了指纹
+      // 2) 检查是否已录入指纹
       const enrolled = await new Promise((resolve, reject) => {
         wx.checkIsSoterEnrolledInDevice({
           checkAuthMode: 'fingerPrint',
@@ -206,13 +261,16 @@ Page({
         })
       })
       if (!enrolled.isEnrolled) {
-        this.setData({
-          stepStatus: '❌ 设备未录入指纹，请在系统设置中添加指纹后重试',
+        wx.showModal({
+          title: '未录入指纹',
+          content: '请在手机系统设置中添加指纹后再试',
+          showCancel: false,
         })
+        this.setData({ stepStatus: '❌ 设备未录入指纹，请先到系统设置添加' })
         return
       }
 
-      // 3) 启动指纹认证（弹出系统指纹弹窗）
+      // 3) 启动指纹认证
       const authRes = await new Promise((resolve, reject) => {
         wx.startSoterAuthentication({
           requestAuthModes: ['fingerPrint'],
@@ -222,46 +280,85 @@ Page({
           fail: reject,
         })
       })
-      // authRes: { resultJSON, resultJSONSignature, errMsg }
       const fpData = `${authRes.resultJSON}|${authRes.resultJSONSignature}`
+      // 指纹通过 → 进入人脸步骤
       this.setData({
         fingerprintChecked: true,
         fingerprintData: fpData,
-        stepStatus: '✅ 指纹验证通过',
+        flowStep: 'face',
+        stepTitle: '第 2 步 / 共 3 步 · 人脸识别（活体）',
+        stepStatus: '✅ 指纹验证通过，请进行人脸识别',
       })
     } catch (e) {
       const errMsg = (e && e.errMsg) || ''
       if (errMsg.includes('cancel')) {
-        this.setData({ stepStatus: '❌ 用户取消了指纹验证' })
+        this.setData({ stepStatus: '❌ 用户取消了指纹验证，请重试' })
       } else {
-        this.setData({
-          stepStatus: `❌ 指纹验证失败：${errMsg || '未知'}`,
-        })
+        this.setData({ stepStatus: `❌ 指纹验证失败：${errMsg || '未知'}` })
       }
     }
   },
 
-  // ============ 三重签到：提交 ============
+  // ============ 第 2 步：人脸采集（活体两帧） ============
+  async onCaptureFace() {
+    try {
+      const img = await chooseImageToBase64(true)
+      this.setData({
+        faceImg: img,
+        faceChecked: true,
+        stepStatus: '✅ 第一帧已采集，请移动头部后拍摄第二帧（活体）',
+      })
+    } catch (e) {
+      if (!e.cancelled) {
+        wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
+      }
+    }
+  },
+
+  // 第二帧（活体：两帧关键点位移比对）
+  async onCaptureLive() {
+    try {
+      const img2 = await chooseImageToBase64(true)
+      this.setData({
+        faceImg2: img2,
+        stepStatus: '✅ 第二帧已采集，活体校验完成',
+      })
+      // 两帧齐全 → 进入可提交状态
+      if (this.data.faceImg) {
+        this.setData({
+          flowStep: 'ready',
+          stepTitle: '三项因子已就绪',
+          stepStatus: '✅ 人脸（活体）已通过，可以提交签到',
+        })
+      }
+    } catch (e) {
+      if (!e.cancelled) {
+        wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
+      }
+    }
+  },
+
+  // ============ 提交签到（三因子） ============
   async onThreeFactorSubmit() {
     const {
       selectedSessionId, faceImg, faceImg2, lat, lng,
-      fingerprintData, faceChecked, geoChecked, fingerprintChecked,
+      fingerprintData, fingerprintChecked, faceChecked, geoState,
     } = this.data
     if (!selectedSessionId) {
       wx.showToast({ title: '暂无进行中的签到', icon: 'none' })
       return
     }
-    // 三重因子齐全校验
-    if (!faceChecked) {
-      wx.showToast({ title: '请先采集人脸', icon: 'none' })
-      return
-    }
-    if (!geoChecked) {
-      wx.showToast({ title: '请先采集定位', icon: 'none' })
-      return
-    }
+    // 三因子齐全校验
     if (!fingerprintChecked) {
-      wx.showToast({ title: '请先验证指纹', icon: 'none' })
+      wx.showToast({ title: '请先完成指纹验证', icon: 'none' })
+      return
+    }
+    if (!faceChecked || !faceImg || !faceImg2) {
+      wx.showToast({ title: '请先完成人脸及活体采集', icon: 'none' })
+      return
+    }
+    if (lat === null || lng === null) {
+      wx.showToast({ title: '定位未就绪，请稍候或重试', icon: 'none' })
       return
     }
     this.setData({ submitting: true })
@@ -279,18 +376,22 @@ Page({
         content: `${data.status_cn} · 相似度 ${data.similarity} · 距离 ${data.distance_m} 米`,
         showCancel: false,
         success: () => {
-          this._resetThreeFactor()
+          this._resetFlow()
           this.loadData()
         },
       })
     } catch (e) {
-      wx.showToast({ title: e.message || '签到失败', icon: 'none', duration: 3000 })
+      wx.showModal({
+        title: '签到失败',
+        content: e.message || '签到失败',
+        showCancel: false,
+      })
     } finally {
       this.setData({ submitting: false })
     }
   },
 
-  // ============ 演示签到（跳过人脸/指纹） ============
+  // ============ 演示签到（跳过人脸/指纹，仅用于演示环境） ============
   async onDemoCheckin() {
     const { selectedSessionId, selectedSession } = this.data
     if (!selectedSessionId) {
@@ -314,24 +415,9 @@ Page({
         success: () => this.loadData(),
       })
     } catch (e) {
-      wx.showToast({ title: e.message || '签到失败', icon: 'none' })
+      wx.showModal({ title: '签到失败', content: e.message || '签到失败', showCancel: false })
     } finally {
       this.setData({ submitting: false })
-    }
-  },
-
-  // ============ 第二帧（活体，可选） ============
-  async onCaptureLive() {
-    try {
-      const img2 = await chooseImageToBase64(true)
-      this.setData({
-        faceImg2: img2,
-        stepStatus: '✅ 已采集第二帧（活体检测）',
-      })
-    } catch (e) {
-      if (!e.cancelled) {
-        wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
-      }
     }
   },
 
@@ -356,8 +442,8 @@ Page({
   },
 
   // ============ 请假/补签 ============
-  onOpenApply(e) {
-    const sid = e.currentTarget.dataset.id
+  onOpenApply() {
+    const sid = this.data.selectedSessionId
     this.setData({ showApply: true, applySessionId: sid, applyReason: '' })
   },
 

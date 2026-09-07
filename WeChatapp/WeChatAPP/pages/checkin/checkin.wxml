@@ -6,7 +6,8 @@
       <text class="count-badge" wx:if="{{activeSessions.length > 0}}">{{activeSessions.length}}</text>
     </view>
     <block wx:if="{{activeSessions.length > 0}}">
-      <picker mode="selector" range="{{activeSessions}}" range-key="course_name" value="{{selectedSessionId}}" bindchange="onSessionChange">
+      <!-- 会话选择 -->
+      <picker mode="selector" range="{{activeSessions}}" range-key="course_name" value="{{selectedIndex}}" bindchange="onSessionChange">
         <view class="session-select">
           <view class="session-left">
             <text class="session-name">{{selectedSession.course_name}}</text>
@@ -18,75 +19,126 @@
         </view>
       </picker>
 
-      <!-- 三重签到：人脸 + 定位 + 指纹 -->
-      <view class="three-factor">
-        <view class="factor-row">
-          <view class="factor-icon {{faceChecked ? 'ok' : ''}}">
-            {{faceChecked ? '✅' : '1️⃣'}}
+      <!-- ========== 向导流程 ========== -->
+      <!-- 未开始：引导按钮 -->
+      <block wx:if="{{flowStep === 'idle'}}">
+        <view class="flow-intro">
+          <view class="flow-steps-overview">
+            <view class="flow-step-chip">① 指纹验证</view>
+            <view class="flow-step-chip">② 人脸识别（活体）</view>
+            <view class="flow-step-chip">③ 定位（自动获取）</view>
           </view>
-          <view class="factor-main">
-            <view class="factor-title">人脸采集</view>
-            <view class="factor-sub">{{faceChecked ? '已采集' : '拍一张清晰的自拍'}}</view>
-          </view>
-          <button class="btn btn-sm {{faceChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFace">
-            {{faceChecked ? '重拍' : '拍照'}}
+          <view class="flow-tip">点击开始后，定位将自动获取，随后依次完成指纹与人脸</view>
+          <button class="btn btn-primary btn-block start-btn" bindtap="onStartCheckin">
+            开始签到
           </button>
+          <view class="flow-demo-link" bindtap="onDemoCheckin">演示签到（跳过人脸/指纹）</view>
         </view>
+      </block>
 
-        <view class="factor-row">
-          <view class="factor-icon {{geoChecked ? 'ok' : ''}}">
-            {{geoChecked ? '✅' : '2️⃣'}}
+      <!-- 第 1 步：指纹 -->
+      <block wx:elif="{{flowStep === 'fingerprint'}}">
+        <view class="flow-card">
+          <view class="flow-header">
+            <view class="flow-progress">1 / 3</view>
+            <view class="flow-title">指纹验证</view>
           </view>
-          <view class="factor-main">
-            <view class="factor-title">定位采集</view>
-            <view class="factor-sub">{{lat ? lat + ', ' + lng : '获取当前 GPS 坐标'}}</view>
-          </view>
-          <button class="btn btn-sm {{geoChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureGeo">
-            {{geoChecked ? '重定' : '定位'}}
+          <view class="flow-desc">请将手指放在手机指纹识别区域</view>
+          <view class="factor-chip done-chip">🔒 使用手机系统指纹</view>
+          <button class="btn btn-primary btn-block" bindtap="onCaptureFingerprint">
+            开始指纹验证
           </button>
+          <view class="step-status" wx:if="{{stepStatus}}">{{stepStatus}}</view>
+          <view class="loc-status" wx:if="{{geoState === 'ok'}}">📍 定位：{{geoText}}</view>
+          <view class="loc-status warn" wx:elif="{{geoState === 'fallback'}}">📍 定位获取失败，将使用教师坐标（后端判定）</view>
         </view>
+      </block>
 
-        <view class="factor-row">
-          <view class="factor-icon {{fingerprintChecked ? 'ok' : ''}}">
-            {{fingerprintChecked ? '✅' : '3️⃣'}}
+      <!-- 第 2 步：人脸（活体两帧） -->
+      <block wx:elif="{{flowStep === 'face'}}">
+        <view class="flow-card">
+          <view class="flow-header">
+            <view class="flow-progress">2 / 3</view>
+            <view class="flow-title">人脸识别（活体）</view>
           </view>
-          <view class="factor-main">
-            <view class="factor-title">指纹验证</view>
-            <view class="factor-sub">{{fingerprintChecked ? '已通过' : '使用手机系统指纹'}}</view>
+          <view class="flow-desc">先拍一张正脸，再移动头部拍一张，用于活体校验</view>
+
+          <view class="factor-row">
+            <view class="factor-icon {{faceChecked ? 'ok' : ''}}">
+              {{faceChecked ? '✅' : '1️⃣'}}
+            </view>
+            <view class="factor-main">
+              <view class="factor-title">第一帧 · 正脸</view>
+              <view class="factor-sub">{{faceChecked ? '已采集' : '拍一张清晰的自拍'}}</view>
+            </view>
+            <button class="btn btn-sm {{faceChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFace">
+              {{faceChecked ? '重拍' : '拍照'}}
+            </button>
           </view>
-          <button class="btn btn-sm {{fingerprintChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFingerprint">
-            {{fingerprintChecked ? '重验' : '验证'}}
+
+          <view class="factor-row {{faceChecked ? '' : 'dim'}}">
+            <view class="factor-icon {{faceImg2 ? 'ok' : ''}}">
+              {{faceImg2 ? '✅' : '2️⃣'}}
+            </view>
+            <view class="factor-main">
+              <view class="factor-title">第二帧 · 活体</view>
+              <view class="factor-sub">{{faceImg2 ? '已采集' : faceChecked ? '请移动头部后拍摄' : '先拍第一帧'}}</view>
+            </view>
+            <button class="btn btn-sm {{faceImg2 ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureLive" disabled="{{!faceChecked}}">
+              {{faceImg2 ? '重拍' : '拍照'}}
+            </button>
+          </view>
+
+          <view class="step-status" wx:if="{{stepStatus}}">{{stepStatus}}</view>
+          <view class="loc-status" wx:if="{{geoState === 'ok'}}">📍 定位：{{geoText}}</view>
+          <view class="loc-status warn" wx:elif="{{geoState === 'fallback'}}">📍 定位获取失败，将使用教师坐标（后端判定）</view>
+        </view>
+      </block>
+
+      <!-- 完成：可提交 -->
+      <block wx:elif="{{flowStep === 'ready'}}">
+        <view class="flow-card">
+          <view class="flow-header">
+            <view class="flow-progress ok">3 / 3</view>
+            <view class="flow-title">三项因子已就绪</view>
+          </view>
+          <view class="ready-list">
+            <view class="factor-row">
+              <view class="factor-icon ok">✅</view>
+              <view class="factor-main">
+                <view class="factor-title">指纹验证</view>
+                <view class="factor-sub">已通过</view>
+              </view>
+            </view>
+            <view class="factor-row">
+              <view class="factor-icon ok">✅</view>
+              <view class="factor-main">
+                <view class="factor-title">人脸识别（活体两帧）</view>
+                <view class="factor-sub">已采集</view>
+              </view>
+            </view>
+            <view class="factor-row">
+              <view class="factor-icon ok">✅</view>
+              <view class="factor-main">
+                <view class="factor-title">定位</view>
+                <view class="factor-sub">
+                  {{geoState === 'ok' ? '已获取 GPS 坐标' : geoState === 'fallback' ? '使用教师坐标（后端判定）' : '已就绪'}}
+                </view>
+              </view>
+            </view>
+          </view>
+          <button
+            class="btn btn-primary btn-block submit-btn"
+            bindtap="onThreeFactorSubmit"
+            loading="{{submitting}}"
+          >
+            提交签到（三因子）
           </button>
+          <view class="flow-demo-link" bindtap="onDemoCheckin">演示签到（跳过人脸/指纹）</view>
         </view>
+      </block>
 
-        <!-- 可选：第二帧（活体检测） -->
-        <view class="factor-row optional">
-          <view class="factor-icon {{faceImg2 ? 'ok' : ''}}">
-            {{faceImg2 ? '✅' : '🕶️'}}
-          </view>
-          <view class="factor-main">
-            <view class="factor-title">活体检测（可选）</view>
-            <view class="factor-sub">{{faceImg2 ? '已采集' : '第二帧关键点比对'}}</view>
-          </view>
-          <button class="btn btn-sm btn-outline" bindtap="onCaptureLive">
-            {{faceImg2 ? '重拍' : '补拍'}}
-          </button>
-        </view>
-
-        <!-- 流程状态提示 -->
-        <view class="step-status" wx:if="{{stepStatus}}">{{stepStatus}}</view>
-
-        <button
-          class="btn btn-primary btn-block submit-btn"
-          bindtap="onThreeFactorSubmit"
-          loading="{{submitting}}"
-          disabled="{{!faceChecked || !geoChecked || !fingerprintChecked}}"
-        >
-          提交签到（三因子）
-        </button>
-      </view>
-
-      <view class="apply-link" bindtap="onOpenApply" data-id="{{selectedSessionId}}">
+      <view class="apply-link" bindtap="onOpenApply">
         无法签到？申请请假/补签 →
       </view>
     </block>

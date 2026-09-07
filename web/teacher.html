@@ -384,8 +384,16 @@
               setTimeout(function () { if (!done) { done = true; rej({ message: "定位超时" }); } }, 5500);
             });
             lat = pos.coords.latitude; lng = pos.coords.longitude;
-            $("ck-geo-status").textContent = "定位成功：" + lat.toFixed(5) + ", " + lng.toFixed(5);
-            console.log("[签到] 教师定位成功:", lat, lng);
+            var acc = pos.coords.accuracy || 0;
+            if (acc > 300) {
+              // IP 定位等低精度源：误差可达公里级，不能作为围栏基准
+              lat = null; lng = null;
+              $("ck-geo-status").textContent = "定位精度不足（" + Math.round(acc) + "m），用默认坐标";
+              console.warn("[签到] 定位精度不足，使用默认坐标:", acc);
+            } else {
+              $("ck-geo-status").textContent = "定位成功：" + lat.toFixed(5) + ", " + lng.toFixed(5) + "（精度" + Math.round(acc) + "m）";
+              console.log("[签到] 教师定位成功:", lat, lng, "accuracy=", acc);
+            }
           } catch (e) {
             $("ck-geo-status").textContent = "定位失败（" + (e && e.message || "未知") + "），用默认坐标";
             console.warn("[签到] 定位失败，使用默认坐标:", e && e.message);

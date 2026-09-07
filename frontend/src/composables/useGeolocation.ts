@@ -7,11 +7,21 @@ const GEO_ERROR_MSG: Record<number, string> = {
   3: '定位超时,请检查定位权限后重试',
 };
 
+// 精度阈值：accuracy 大于该值认为是 IP 定位等低精度源，不可作为围栏基准
+export const ACCURACY_LIMIT_M = 300;
+
+export interface GeoPosition {
+  lat: number;
+  lng: number;
+  accuracy: number;
+}
+
 /**
  * 高精度定位采集(增强版)
  * - 安全上下文检测:非 HTTPS/localhost 时明确提示,不无限等待
  * - 兜底超时:防止 getCurrentPosition 回调永不触发导致 UI 一直转圈
  * - 明确错误信息:权限拒绝/信号/超时分别提示
+ * - 返回 accuracy 精度,供调用方判断是否可靠(IP 定位可达公里级误差)
  */
 export function useGeolocation() {
   const loading = ref(false);
@@ -31,7 +41,7 @@ export function useGeolocation() {
     return 'unsupported';
   }
 
-  async function getPosition(): Promise<{ lat: number; lng: number } | null> {
+  async function getPosition(): Promise<GeoPosition | null> {
     // 1. 浏览器不支持
     if (!('geolocation' in navigator)) {
       error.value = '浏览器不支持定位 API';
@@ -52,7 +62,7 @@ export function useGeolocation() {
 
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (result: { lat: number; lng: number } | null, msg = '') => {
+      const finish = (result: GeoPosition | null, msg = '') => {
         if (settled) return;
         settled = true;
         clearTimeout(hardTimer);
@@ -71,7 +81,8 @@ export function useGeolocation() {
         (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
-          finish({ lat, lng });
+          const accuracy = pos.coords.accuracy ?? 0;
+          finish({ lat, lng, accuracy });
         },
         (err) => {
           const msg =
@@ -85,5 +96,5 @@ export function useGeolocation() {
     });
   }
 
-  return { loading, error, getPosition, permissionState };
+  return { loading, error, getPosition, permissionState, ACCURACY_LIMIT_M };
 }
