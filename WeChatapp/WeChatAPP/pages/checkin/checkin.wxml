@@ -18,14 +18,74 @@
         </view>
       </picker>
 
-      <view class="action-row">
-        <button class="btn btn-primary flex-1" bindtap="onCameraCheckin" loading="{{submitting}}">
-          📷 摄像头签到
-        </button>
-        <button class="btn btn-outline flex-1" bindtap="onDemoCheckin" loading="{{submitting}}">
-          演示签到
+      <!-- 三重签到：人脸 + 定位 + 指纹 -->
+      <view class="three-factor">
+        <view class="factor-row">
+          <view class="factor-icon {{faceChecked ? 'ok' : ''}}">
+            {{faceChecked ? '✅' : '1️⃣'}}
+          </view>
+          <view class="factor-main">
+            <view class="factor-title">人脸采集</view>
+            <view class="factor-sub">{{faceChecked ? '已采集' : '拍一张清晰的自拍'}}</view>
+          </view>
+          <button class="btn btn-sm {{faceChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFace">
+            {{faceChecked ? '重拍' : '拍照'}}
+          </button>
+        </view>
+
+        <view class="factor-row">
+          <view class="factor-icon {{geoChecked ? 'ok' : ''}}">
+            {{geoChecked ? '✅' : '2️⃣'}}
+          </view>
+          <view class="factor-main">
+            <view class="factor-title">定位采集</view>
+            <view class="factor-sub">{{lat ? lat + ', ' + lng : '获取当前 GPS 坐标'}}</view>
+          </view>
+          <button class="btn btn-sm {{geoChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureGeo">
+            {{geoChecked ? '重定' : '定位'}}
+          </button>
+        </view>
+
+        <view class="factor-row">
+          <view class="factor-icon {{fingerprintChecked ? 'ok' : ''}}">
+            {{fingerprintChecked ? '✅' : '3️⃣'}}
+          </view>
+          <view class="factor-main">
+            <view class="factor-title">指纹验证</view>
+            <view class="factor-sub">{{fingerprintChecked ? '已通过' : '使用手机系统指纹'}}</view>
+          </view>
+          <button class="btn btn-sm {{fingerprintChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFingerprint">
+            {{fingerprintChecked ? '重验' : '验证'}}
+          </button>
+        </view>
+
+        <!-- 可选：第二帧（活体检测） -->
+        <view class="factor-row optional">
+          <view class="factor-icon {{faceImg2 ? 'ok' : ''}}">
+            {{faceImg2 ? '✅' : '🕶️'}}
+          </view>
+          <view class="factor-main">
+            <view class="factor-title">活体检测（可选）</view>
+            <view class="factor-sub">{{faceImg2 ? '已采集' : '第二帧关键点比对'}}</view>
+          </view>
+          <button class="btn btn-sm btn-outline" bindtap="onCaptureLive">
+            {{faceImg2 ? '重拍' : '补拍'}}
+          </button>
+        </view>
+
+        <!-- 流程状态提示 -->
+        <view class="step-status" wx:if="{{stepStatus}}">{{stepStatus}}</view>
+
+        <button
+          class="btn btn-primary btn-block submit-btn"
+          bindtap="onThreeFactorSubmit"
+          loading="{{submitting}}"
+          disabled="{{!faceChecked || !geoChecked || !fingerprintChecked}}"
+        >
+          提交签到（三因子）
         </button>
       </view>
+
       <view class="apply-link" bindtap="onOpenApply" data-id="{{selectedSessionId}}">
         无法签到？申请请假/补签 →
       </view>

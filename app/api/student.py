@@ -298,8 +298,17 @@ def submit_checkin(
         )
         raise BizError(2002, f"人脸相似度不足({sim:.2f})，已提交人工复核")
 
-    # 8) 指纹核验（预留，不阻断）
+    # 8) 指纹核验（启用：未通过则阻断签到，演示模式豁免）
     fp = fingerprint.verify(sno, req.fingerprint)
+    if not demo_mode and not fp.get("passed"):
+        logger.warning(
+            "签到被拒(指纹未通过) student=%s session=%s course=%s reason=%s",
+            sno, session.id, session.course_id, fp.get("message"),
+        )
+        raise BizError(
+            2004,
+            f"指纹核验未通过：{fp.get('message', '未知原因')}",
+        )
 
     # 9) 两帧活体（可选；演示模式无真实照片，直接判通过）
     if not demo_mode and req.image_b64_2:

@@ -63,5 +63,8 @@
       "desc": "用于签到时的地理围栏校验，确认您在签到范围内"
     }
   },
-  "requiredPrivateInfos": ["getLocation", "chooseLocation"]
+  "requiredPrivateInfos": [
+    "getLocation",
+    "chooseLocation"
+  ]
 }
