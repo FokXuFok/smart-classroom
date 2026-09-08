@@ -25,10 +25,10 @@
         <view class="flow-intro">
           <view class="flow-steps-overview">
             <view class="flow-step-chip">① 指纹验证</view>
-            <view class="flow-step-chip">② 人脸识别（活体）</view>
+            <view class="flow-step-chip">② 人脸（含二维码）</view>
             <view class="flow-step-chip">③ 定位（自动获取）</view>
           </view>
-          <view class="flow-tip">点击开始后，定位将自动获取，随后依次完成指纹与人脸</view>
+          <view class="flow-tip">点击开始后，请将教师屏幕上的签到二维码与本人脸部一起拍入画面</view>
           <button class="btn btn-primary btn-block start-btn" bindtap="onStartCheckin">
             开始签到
           </button>
@@ -54,38 +54,25 @@
         </view>
       </block>
 
-      <!-- 第 2 步：人脸（活体两帧） -->
+      <!-- 第 2 步：人脸（单帧，须含教师屏幕二维码） -->
       <block wx:elif="{{flowStep === 'face'}}">
         <view class="flow-card">
           <view class="flow-header">
-            <view class="flow-progress">2 / 3</view>
-            <view class="flow-title">人脸识别（活体）</view>
+            <view class="flow-progress">2 / 2</view>
+            <view class="flow-title">人脸识别（含二维码）</view>
           </view>
-          <view class="flow-desc">先拍一张正脸，再移动头部拍一张，用于活体校验</view>
+          <view class="flow-desc">请将教师屏幕上的签到二维码与本人脸部一起拍入画面（照片须照到人脸与二维码）</view>
 
           <view class="factor-row">
             <view class="factor-icon {{faceChecked ? 'ok' : ''}}">
               {{faceChecked ? '✅' : '1️⃣'}}
             </view>
             <view class="factor-main">
-              <view class="factor-title">第一帧 · 正脸</view>
-              <view class="factor-sub">{{faceChecked ? '已采集' : '拍一张清晰的自拍'}}</view>
+              <view class="factor-title">正脸 · 含二维码</view>
+              <view class="factor-sub">{{faceChecked ? '已采集' : '拍一张清晰的自拍（含屏幕二维码）'}}</view>
             </view>
             <button class="btn btn-sm {{faceChecked ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureFace">
               {{faceChecked ? '重拍' : '拍照'}}
-            </button>
-          </view>
-
-          <view class="factor-row {{faceChecked ? '' : 'dim'}}">
-            <view class="factor-icon {{faceImg2 ? 'ok' : ''}}">
-              {{faceImg2 ? '✅' : '2️⃣'}}
-            </view>
-            <view class="factor-main">
-              <view class="factor-title">第二帧 · 活体</view>
-              <view class="factor-sub">{{faceImg2 ? '已采集' : faceChecked ? '请移动头部后拍摄' : '先拍第一帧'}}</view>
-            </view>
-            <button class="btn btn-sm {{faceImg2 ? 'btn-outline' : 'btn-primary'}}" bindtap="onCaptureLive" disabled="{{!faceChecked}}">
-              {{faceImg2 ? '重拍' : '拍照'}}
             </button>
           </view>
 
@@ -99,8 +86,8 @@
       <block wx:elif="{{flowStep === 'ready'}}">
         <view class="flow-card">
           <view class="flow-header">
-            <view class="flow-progress ok">3 / 3</view>
-            <view class="flow-title">三项因子已就绪</view>
+            <view class="flow-progress ok">✓</view>
+            <view class="flow-title">因子已就绪</view>
           </view>
           <view class="ready-list">
             <view class="factor-row">
@@ -113,7 +100,7 @@
             <view class="factor-row">
               <view class="factor-icon ok">✅</view>
               <view class="factor-main">
-                <view class="factor-title">人脸识别（活体两帧）</view>
+                <view class="factor-title">人脸识别（含二维码）</view>
                 <view class="factor-sub">已采集</view>
               </view>
             </view>

@@ -39,6 +39,7 @@ class CheckinSession(Base):
     )
     range_meters = Column(Integer, server_default=text("200"), comment="有效范围(米)")
     duration_minutes = Column(Integer, server_default=text("5"), comment="签到时长(分钟)")
+    qr_token = Column(String(64), comment="签到二维码Token(每次发起签到重新生成)")
     status = Column(Integer, server_default=text("1"), comment="状态: 1-进行中, 0-已结束")
     create_time = Column(DateTime, server_default=text("CURRENT_TIMESTAMP"), comment="创建")
     end_time = Column(DateTime, comment="结束")

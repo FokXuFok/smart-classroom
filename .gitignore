@@ -21,3 +21,14 @@ dist/
 .trae/
 .vscode/
 *.tsbuildinfo
+# Vite 自动生成的类型声明（编译产物）
+vite.config.d.ts
+vite.config.js
+
+# 设计稿/原型工作区（不影响运行时）
+smart-classroom-youth/
+
+# IDE / 工具缓存
+.trae/
+.vscode/
+*.tsbuildinfo

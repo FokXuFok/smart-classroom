@@ -39,6 +39,7 @@ REQUIRED = [
     ("httpx", "httpx"),
     ("cv2", "opencv-python"),
     ("numpy", "numpy"),
+    ("qrcode", "qrcode"),
     ("insightface", "insightface"),
     ("onnxruntime", "onnxruntime"),
     ("openpyxl", "openpyxl"),

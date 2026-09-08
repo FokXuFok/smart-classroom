@@ -4,11 +4,12 @@
 import asyncio
 import datetime
 import json
+import uuid
 from io import BytesIO
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func
 
 from app.api.deps import CurrentUser, get_db, require_roles
@@ -16,6 +17,7 @@ from app.api.notification import push
 from app.core.exception import BizError, ok
 from app.core.events import checkin_bus
 from app.core.geofence import DEFAULT_COORD, haversine_m
+from app.core.qr_check import QR_PREFIX
 from app.models import (
     AttendanceRecord,
     CheckinSession,
@@ -73,6 +75,7 @@ def start_checkin(
         teacher_lng=lng,
         range_meters=req.range_meters,
         duration_minutes=req.duration_minutes,
+        qr_token=uuid.uuid4().hex,  # 每次发起签到重新生成，防翻拍旧照
         status=1,
         create_time=now,
     )
@@ -88,8 +91,43 @@ def start_checkin(
             **session_dict(session),
             "deadline": deadline,
             "used_default": used_default,
+            "qr_url": f"/api/teacher/checkin/{session.id}/qr",
         },
         message="签到已发起",
+    )
+
+
+# ---------- 签到二维码（SVG，投影到大屏供学生拍摄） ----------
+
+@router.get("/checkin/{session_id}/qr")
+def checkin_qr(
+    session_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """当前会话签名二维码 SVG。内容 = SC:<qr_token>；
+    专用的 QRCodeDetector 会话端在 student.py 用 cv2 从照片中解码比对。
+    """
+    session = _get_owned_session(db, session_id, current.user.teacher_no)
+    if not session.qr_token:
+        raise BizError(404, "该会话没有二维码")
+    try:
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+    except Exception as exc:
+        raise BizError(6002, f"二维码组件未安装（pip install qrcode）：{exc}") from exc
+    img = qrcode.make(
+        f"{QR_PREFIX}{session.qr_token}",
+        image_factory=SvgPathImage,
+        box_size=8,
+        border=2,
+    )
+    buf = BytesIO()
+    img.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -173,6 +211,22 @@ def list_checkin_sessions(
     db=Depends(get_db),
 ):
     """本人签到会话历史（倒序 50 条，course_id 可选过滤）"""
+    # 顺手关闭已过期但仍标记为进行中的会话（时间到了自动结束）
+    now = datetime.datetime.now()
+    expired = (
+        db.query(CheckinSession)
+        .filter(CheckinSession.status == 1)
+        .filter(CheckinSession.teacher_id == current.user.teacher_no)
+        .all()
+    )
+    for s in expired:
+        deadline = s.create_time + datetime.timedelta(minutes=s.duration_minutes or 5)
+        if deadline <= now:
+            s.status = 0
+            s.end_time = now
+    if expired:
+        db.commit()
+
     signed_sub = (
         db.query(func.count(AttendanceRecord.id))
         .filter(AttendanceRecord.session_id == CheckinSession.id)

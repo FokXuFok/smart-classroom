@@ -15,11 +15,10 @@ class StartCheckinReq(BaseModel):
 
 class SubmitCheckinReq(BaseModel):
     session_id: int
-    image_b64: str                       # 学生自拍
-    image_b64_2: Optional[str] = None    # 第二帧（活体，可选：提供则做两帧活体）
+    image_b64: str                       # 学生自拍（须包含教师屏幕上的签到二维码）
     lat: Optional[float] = None
     lng: Optional[float] = None
-    fingerprint: Optional[str] = None    # 指纹数据（预留）
+    fingerprint: Optional[str] = None    # 指纹数据（微信 SOTER）
 
 
 class ApplyCheckinReq(BaseModel):

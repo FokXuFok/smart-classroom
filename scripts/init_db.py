@@ -76,6 +76,10 @@ def main() -> None:
         "为 notification 补联合索引 idx_user_type_is_read（未读通知筛选）",
         "ALTER TABLE notification ADD INDEX idx_user_type_is_read (user_id, user_type, is_read)",
     )
+    _run_patch(
+        "为 checkin_session 补 qr_token 字段（签到二维码Token，每次签到重新生成）",
+        "ALTER TABLE checkin_session ADD COLUMN qr_token VARCHAR(64) NULL",
+    )
 
     # 4. 结果摘要
     print(f"[DONE] 增量升级完成：库中共 {len(after)} 个表/视图（含视图）")

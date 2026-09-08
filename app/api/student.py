@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 import config
 from app.api.deps import CurrentUser, get_db, require_roles
-from app.core import face_engine, fingerprint
+from app.core import face_engine, fingerprint, qr_check
 from app.core.events import checkin_bus
 from app.core.exception import BizError, ok
 from app.core.geofence import within_range
@@ -310,48 +310,17 @@ def submit_checkin(
             f"指纹核验未通过：{fp.get('message', '未知原因')}",
         )
 
-    # 9) 两帧活体（非演示模式且提供第二帧时强制校验：未通过则转人工复核）
+    # 9) 二维码核验（非演示模式）：照片中必须包含教师屏幕上的当前签到二维码
     if demo_mode:
-        live = {"passed": True, "note": "演示模式"}
-        is_live = 1
-    elif req.image_b64_2:
-        live = eng.liveness_two_frames(req.image_b64, req.image_b64_2)
-        is_live = 1 if live.get("passed") else 0
-        if not live.get("passed"):
-            db.add(
-                AttendanceRecord(
-                    course_id=session.course_id,
-                    student_id=sno,
-                    attendance_date=datetime.date.today(),
-                    status=0,
-                    check_in_time=now,
-                    check_in_type=1,
-                    location=f"{req.lat},{req.lng}",
-                    similarity1=round(float(sim), 4),
-                    is_liveness_passed=0,
-                    session_id=session.id,
-                    review_status=1,
-                    review_remark=f"活体校验未通过：{live.get('reason', '未知')}，待人工复核",
-                )
-            )
-            db.commit()
-            logger.warning(
-                "签到转人工复核(活体未通过) student=%s session=%s course=%s reason=%s",
-                sno, session.id, session.course_id, live.get("reason"),
-            )
-            checkin_bus.publish(
-                session.id,
-                {
-                    "type": "review",
-                    "student_no": sno,
-                    "name": student.name,
-                    "reason": f"活体校验未通过：{live.get('reason', '未知')}，待人工复核",
-                },
-            )
-            raise BizError(2007, f"活体校验未通过：{live.get('reason', '未知')}，已提交人工复核")
+        qr = {"passed": True, "message": "演示模式"}
     else:
-        live = {"passed": True, "note": "未采集第二帧"}
-        is_live = 1
+        qr = qr_check.check_qr(req.image_b64, session.qr_token)
+        if not qr.get("passed"):
+            logger.warning(
+                "签到被拒(二维码) student=%s session=%s course=%s reason=%s",
+                sno, session.id, session.course_id, qr.get("message"),
+            )
+            raise BizError(2008, f"二维码核验未通过：{qr.get('message')}")
 
     # 10) 正常 / 迟到
     late_delta = datetime.timedelta(minutes=config.LATE_MINUTES)
@@ -368,7 +337,7 @@ def submit_checkin(
         check_in_type=1,
         location=location,
         similarity1=round(float(sim), 4),
-        is_liveness_passed=is_live,
+        is_liveness_passed=1,
         session_id=session.id,
     )
     if not demo_mode:
@@ -390,9 +359,9 @@ def submit_checkin(
         raise BizError(2005, "该会话已签到，请勿重复提交")
     db.refresh(rec)
     logger.info(
-        "签到成功 student=%s session=%s course=%s status=%s(%s) sim=%.3f 距离=%dm 活体=%s",
+        "签到成功 student=%s session=%s course=%s status=%s(%s) sim=%.3f 距离=%dm 二维码=%s",
         sno, session.id, session.course_id, status, ATT_STATUS_CN.get(status),
-        sim, round(dist), is_live,
+        sim, round(dist), qr.get("message"),
     )
     # 实时大屏：把签到结果即时推给教师端看板
     checkin_bus.publish(
@@ -417,7 +386,7 @@ def submit_checkin(
             "similarity": round(float(sim), 4),
             "distance_m": round(dist),
             "fingerprint": fp,
-            "liveness": live,
+            "qr": qr,
         },
         message="签到成功",
     )

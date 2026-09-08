@@ -116,8 +116,8 @@
       '<div class="row"><button class="btn btn-primary" id="ck-enroll">拍照注册人脸</button></div>' +
       '<div id="ck-enroll-result" style="margin-top:8px"></div></div>' +
       '<div class="card" style="margin-bottom:16px"><div class="card-title">人脸签到</div>' +
-      '<div class="light" style="margin-bottom:10px">点击「摄像头签到」打开取景框，对准人脸拍照完成签到' +
-      '（真实人脸比对 + 活体检测 + 定位围栏）。教师端发起签到后，学生端也会收到顶部横幅提醒。</div>' +
+      '<div class="light" style="margin-bottom:10px">点击「摄像头签到」打开取景框，将屏幕上的签到二维码与本人脸部一起拍入画面后完成签到' +
+      '（真实人脸比对 + 二维码核验 + 定位围栏）。教师端发起签到后，学生端也会收到顶部横幅提醒。</div>' +
       '<div class="row"><select id="ck-sel" class="input" style="flex:1;min-width:200px"></select>' +
       '<button class="btn btn-primary" id="ck-cam">摄像头签到</button>' +
       '<button class="btn btn-outline" id="ck-demo">演示签到（无需摄像头）</button></div>' +
@@ -175,6 +175,7 @@
         '<div class="cam-box2"><video id="cam-video" autoplay playsinline muted></video>' +
         '<div class="cam-guide2"><span class="glow" id="cam-glow"></span></div>' +
         '<div class="cam-tip2" id="cam-tip">正在打开摄像头…</div></div>' +
+        '<div class="cam-hint" style="color:#94a3b8;font-size:12px;padding:4px 16px;line-height:1.5">请对准镜头，把教室屏幕上显示的签到二维码与本人脸部一起拍入画面（二维码每次签到都不同）</div>' +
         '<div class="cam-modal-foot">' +
         '<button class="btn btn-outline" id="cam-cancel">取消</button>' +
         '<button class="btn btn-outline" id="cam-fb" disabled>改用演示签到</button>' +
@@ -264,21 +265,13 @@
       canvas.width = v.videoWidth; canvas.height = v.videoHeight;
       var ctx = canvas.getContext("2d");
 
-      // 第一帧
+      // 单帧拍照：人脸 + 教师屏幕上的签到二维码（后端解码比对）
       ctx.drawImage(v, 0, 0);
       var f1 = canvas.toDataURL("image/jpeg", 0.85);
-      // 活体检测：间隔后采集第二帧（提示轻微动作）
-      setTip("已采集第一帧，请<b>轻轻晃动头部</b>…");
-      $("cam-glow").classList.add("on");
-      await new Promise(function (r) { setTimeout(r, 900); });
-      ctx.drawImage(v, 0, 0);
-      var f2 = canvas.toDataURL("image/jpeg", 0.85);
-      $("cam-glow").classList.remove("on");
-
       setTip("正在提交签到…");
       try {
         var d = await api.post("/api/student/checkin/submit", {
-          session_id: cam.sid, image_b64: f1, image_b64_2: f2, lat: cam.lat, lng: cam.lng
+          session_id: cam.sid, image_b64: f1, lat: cam.lat, lng: cam.lng
         });
         setTip("<b>" + esc(d.status_cn) + "</b> · 相似度 " + esc(d.similarity) + " · 距离 " + esc(d.distance_m) + " 米", "ok");
         snap.textContent = "完成"; snap.disabled = false; cam.done = true;

@@ -4,7 +4,7 @@ const { chooseImageToBase64 } = require('../../utils/image')
 const config = require('../../config')
 const app = getApp()
 
-// 签到向导步骤：idle → fingerprint(指纹) → face(人脸+活体) → ready(可提交)
+// 签到向导步骤：idle → fingerprint(指纹) → face(人脸+二维码) → ready(可提交)
 Page({
   data: {
     activeSessions: [],
@@ -24,10 +24,9 @@ Page({
     // 指纹因子
     fingerprintChecked: false,
     fingerprintData: null,       // "<json>|<sig>"
-    // 人脸因子（活体：两帧）
+    // 人脸因子（须将教师屏幕上的签到二维码一起拍入画面）
     faceChecked: false,
-    faceImg: null,               // 第一帧 base64
-    faceImg2: null,              // 第二帧 base64（活体）
+    faceImg: null,               // 自拍 base64（含二维码）
     // 定位因子（点击开始签到时后台并行获取）
     lat: null,
     lng: null,
@@ -125,7 +124,6 @@ Page({
       fingerprintData: null,
       faceChecked: false,
       faceImg: null,
-      faceImg2: null,
       lat: null,
       lng: null,
       geoAccuracy: null,
@@ -174,7 +172,7 @@ Page({
     this._resetFlow()
     this.setData({
       flowStep: 'fingerprint',
-      stepTitle: '第 1 步 / 共 3 步 · 指纹验证',
+      stepTitle: '第 1 步 / 共 2 步 · 指纹验证',
       stepStatus: '正在唤起指纹…',
     })
     // 定位与指纹并行：点击"开始签到"即开始获取定位（不阻塞流程）
@@ -246,7 +244,7 @@ Page({
           fingerprintChecked: true,
           fingerprintData: null,
           flowStep: 'face',
-          stepTitle: '第 2 步 / 共 3 步 · 人脸识别（活体）',
+          stepTitle: '第 2 步 / 共 2 步 · 人脸识别（含二维码）',
           stepStatus: '⚠️ 设备不支持指纹，已跳过（仅演示环境）',
         })
         return
@@ -286,8 +284,8 @@ Page({
         fingerprintChecked: true,
         fingerprintData: fpData,
         flowStep: 'face',
-        stepTitle: '第 2 步 / 共 3 步 · 人脸识别（活体）',
-        stepStatus: '✅ 指纹验证通过，请进行人脸识别',
+        stepTitle: '第 2 步 / 共 2 步 · 人脸识别（含二维码）',
+        stepStatus: '✅ 指纹验证通过，请进行人脸拍照（须拍入屏幕二维码）',
       })
     } catch (e) {
       const errMsg = (e && e.errMsg) || ''
@@ -299,38 +297,17 @@ Page({
     }
   },
 
-  // ============ 第 2 步：人脸采集（活体两帧） ============
+  // ============ 第 2 步：人脸拍照（须拍入教师屏幕上的签到二维码） ============
   async onCaptureFace() {
     try {
       const img = await chooseImageToBase64(true)
       this.setData({
         faceImg: img,
         faceChecked: true,
-        stepStatus: '✅ 第一帧已采集，请移动头部后拍摄第二帧（活体）',
+        flowStep: 'ready',
+        stepTitle: '两项因子已就绪',
+        stepStatus: '✅ 人脸照片已采集（含二维码），可以提交签到',
       })
-    } catch (e) {
-      if (!e.cancelled) {
-        wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
-      }
-    }
-  },
-
-  // 第二帧（活体：两帧关键点位移比对）
-  async onCaptureLive() {
-    try {
-      const img2 = await chooseImageToBase64(true)
-      this.setData({
-        faceImg2: img2,
-        stepStatus: '✅ 第二帧已采集，活体校验完成',
-      })
-      // 两帧齐全 → 进入可提交状态
-      if (this.data.faceImg) {
-        this.setData({
-          flowStep: 'ready',
-          stepTitle: '三项因子已就绪',
-          stepStatus: '✅ 人脸（活体）已通过，可以提交签到',
-        })
-      }
     } catch (e) {
       if (!e.cancelled) {
         wx.showToast({ title: e.message || '拍照失败', icon: 'none' })
@@ -341,7 +318,7 @@ Page({
   // ============ 提交签到（三因子） ============
   async onThreeFactorSubmit() {
     const {
-      selectedSessionId, faceImg, faceImg2, lat, lng,
+      selectedSessionId, faceImg, lat, lng,
       fingerprintData, fingerprintChecked, faceChecked, geoState,
     } = this.data
     if (!selectedSessionId) {
@@ -353,8 +330,8 @@ Page({
       wx.showToast({ title: '请先完成指纹验证', icon: 'none' })
       return
     }
-    if (!faceChecked || !faceImg || !faceImg2) {
-      wx.showToast({ title: '请先完成人脸及活体采集', icon: 'none' })
+    if (!faceChecked || !faceImg) {
+      wx.showToast({ title: '请先完成人脸拍照（含二维码）', icon: 'none' })
       return
     }
     if (lat === null || lng === null) {
@@ -366,7 +343,6 @@ Page({
       const data = await post('/api/student/checkin/submit', {
         session_id: selectedSessionId,
         image_b64: faceImg,
-        image_b64_2: faceImg2,
         lat,
         lng,
         fingerprint: fingerprintData,

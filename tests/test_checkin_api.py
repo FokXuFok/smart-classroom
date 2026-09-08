@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func
 
-from app.core import face_engine
+from app.core import face_engine, qr_check
 from app.core.geofence import DEFAULT_COORD, haversine_m
 from app.database import SessionLocal
 from app.main import app
@@ -24,6 +24,8 @@ STUDENT = "2024001"
 IMG = "!!!not-base64!!!"  # 非法 base64：自拍保存被跳过，避免测试产生磁盘垃圾
 NEAR_COORD = {"lat": DEFAULT_COORD[0], "lng": DEFAULT_COORD[1]}
 FAR_COORD = {"lat": 25.30, "lng": 110.35}  # 距默认坐标约 3.6 公里
+# 格式合法的指纹数据（演示阶段只做格式校验）："<resultJSON>|<signature>"
+MOCK_FP = '{"raw":"mock"}|mock-signature'
 
 
 class FakeEngine:
@@ -41,12 +43,21 @@ class FakeEngine:
     def embedding_to_bytes(self, embedding):
         return np.asarray(embedding, dtype=np.float32).tobytes()
 
-    def liveness_two_frames(self, b64_1, b64_2):
-        return {"passed": True, "reason": "fake-liveness"}
-
 
 def use_fake_engine(monkeypatch, sim=0.9):
     monkeypatch.setattr(face_engine, "get_engine", lambda: FakeEngine(sim))
+
+
+def fake_qr(monkeypatch, passed=True):
+    """假二维码核验：默认通过；passed=False 模拟"未拍到/不匹配"场景"""
+    monkeypatch.setattr(
+        qr_check,
+        "check_qr",
+        lambda image_b64, qr_token: {
+            "passed": passed,
+            "message": "fake-qr-ok" if passed else "fake-qr-reject",
+        },
+    )
 
 
 @pytest.fixture(scope="module")
@@ -123,7 +134,13 @@ def start_session(teacher_token, course_id="CS101", **extra):
 
 
 def submit(token, session_id, coords=NEAR_COORD, **extra):
-    payload = {"session_id": session_id, "image_b64": IMG, **coords, **extra}
+    payload = {
+        "session_id": session_id,
+        "image_b64": IMG,
+        "fingerprint": MOCK_FP,  # 真实签到须带指纹；extra 可覆盖
+        **coords,
+        **extra,
+    }
     return client.post(
         "/api/student/checkin/submit", json=payload, cookies=token
     )
@@ -139,6 +156,32 @@ def test_t1_start_checkin_used_default(teacher_token):
     assert data["teacher_lng"] == pytest.approx(DEFAULT_COORD[1], abs=1e-3)
     assert data["status"] == 1
     assert data["deadline"] is not None
+    # 发起签到返回二维码地址（供教师端投影）
+    assert data["qr_url"] == f"/api/teacher/checkin/{data['id']}/qr"
+
+
+# ---------- t1b 每次发起签到 qr_token 都重新生成 ----------
+
+def test_t1b_qr_token_regenerated_every_start(teacher_token):
+    s1 = start_session(teacher_token)
+    s2 = start_session(teacher_token)
+    db = SessionLocal()
+    t1 = db.get(CheckinSession, s1["id"]).qr_token
+    t2 = db.get(CheckinSession, s2["id"]).qr_token
+    db.close()
+    assert t1 and t2 and t1 != t2
+
+
+# ---------- t1c 学生端 active 接口不泄露 qr_token（防伪造） ----------
+
+def test_t1c_student_active_no_qr_token(teacher_token, student_token):
+    data = start_session(teacher_token)
+    resp = client.get("/api/student/checkin/active", cookies=student_token)
+    body = resp.json()
+    assert body["code"] == 0
+    me = next(s for s in body["data"] if s["id"] == data["id"])
+    assert "qr_token" not in me
+    assert "qr_url" not in me
 
 
 # ---------- t2 非本人课程发起 → 403 ----------
@@ -202,6 +245,7 @@ def test_t5_low_similarity_to_review(teacher_token, student_token, temp_template
 
 def test_t6_submit_success_and_duplicate(teacher_token, student_token, temp_template, monkeypatch):
     use_fake_engine(monkeypatch, sim=0.9)
+    fake_qr(monkeypatch)
     sid = start_session(teacher_token)["id"]
 
     resp = submit(student_token, sid)
@@ -209,8 +253,8 @@ def test_t6_submit_success_and_duplicate(teacher_token, student_token, temp_temp
     assert body["code"] == 0
     assert body["data"]["status"] == 1
     assert body["data"]["similarity"] == pytest.approx(0.9, abs=1e-6)
-    assert body["data"]["fingerprint"]["enabled"] is False  # 预留接口不阻断
-    assert body["data"]["liveness"]["passed"] is True       # 未采集第二帧默认通过
+    assert body["data"]["fingerprint"]["passed"] is True   # MOCK_FP 通过格式校验
+    assert body["data"]["qr"]["passed"] is True            # 二维码核验通过
 
     resp2 = submit(student_token, sid)
     assert resp2.json()["code"] == 2005
@@ -220,6 +264,7 @@ def test_t6_submit_success_and_duplicate(teacher_token, student_token, temp_temp
 
 def test_t7_late_judgement(teacher_token, student_token, temp_template, monkeypatch):
     use_fake_engine(monkeypatch, sim=0.9)
+    fake_qr(monkeypatch)
     # 时长给足 30 分钟，保证改 create_time 后会话仍在进行中
     sid = start_session(teacher_token, duration_minutes=30)["id"]
     db = SessionLocal()
@@ -236,6 +281,7 @@ def test_t7_late_judgement(teacher_token, student_token, temp_template, monkeypa
 
 def test_t8_dashboard_and_end(teacher_token, student_token, temp_template, monkeypatch):
     use_fake_engine(monkeypatch, sim=0.9)
+    fake_qr(monkeypatch)
     sid = start_session(teacher_token)["id"]
     assert submit(student_token, sid).json()["code"] == 0
 
@@ -341,7 +387,7 @@ def test_t11_demo_mode_submit(teacher_token, student_token, temp_template):
     assert body["code"] == 0, body
     data = body["data"]
     assert data["similarity"] == pytest.approx(1.0, abs=1e-6)
-    assert data["liveness"]["passed"] is True
+    assert data["qr"]["passed"] is True   # 演示模式跳过二维码核验
     # 演示模式无真实照片 → 不写自拍文件/URL
     assert data.get("photo_url") is None or data.get("photo_url") == ""
 
@@ -360,3 +406,39 @@ def test_t11_demo_mode_submit(teacher_token, student_token, temp_template):
     # 演示模式重复提交 → 2005（与真实提交同路径去重）
     resp2 = submit(student_token, sid, image_b64="demo")
     assert resp2.json()["code"] == 2005
+
+
+# ---------- t12 二维码核验未通过 → 2008（硬阻断，不转人工复核） ----------
+
+def test_t12_qr_reject(teacher_token, student_token, temp_template, monkeypatch):
+    use_fake_engine(monkeypatch, sim=0.9)
+    fake_qr(monkeypatch, passed=False)
+    sid = start_session(teacher_token)["id"]
+    resp = submit(student_token, sid)
+    body = resp.json()
+    assert body["code"] == 2008
+    assert "fake-qr-reject" in body["message"]
+    # 未生成任何考勤记录（硬阻断，不入库）
+    db = SessionLocal()
+    rec = (
+        db.query(AttendanceRecord)
+        .filter_by(session_id=sid, student_id=STUDENT)
+        .first()
+    )
+    db.close()
+    assert rec is None
+
+
+# ---------- t13 教师二维码 SVG 接口：本人可取到 / 无权教师被拒 ----------
+
+def test_t13_qr_svg_endpoint(teacher_token):
+    sid = start_session(teacher_token)["id"]
+    resp = client.get(f"/api/teacher/checkin/{sid}/qr", cookies=teacher_token)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in resp.content
+
+    # 非课程教师 → 403
+    other = forge_cookies("T002", "teacher", "测试教师")
+    resp2 = client.get(f"/api/teacher/checkin/{sid}/qr", cookies=other)
+    assert resp2.json()["code"] == 403

@@ -67,8 +67,9 @@
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">{{ fmtTime(row.create_time) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
+            <el-button size="small" @click="showQr(row)">二维码</el-button>
             <el-button size="small" type="primary" @click="goDashboard(row.id)">
               看板
             </el-button>
@@ -93,11 +94,25 @@
       :init-lng="form.lng ?? undefined"
       @picked="onMapPicked"
     />
+
+    <!-- 签到二维码（投影到大屏，学生拍照时须拍入画面） -->
+    <el-dialog v-model="qrVisible" title="签到二维码（请投影到屏幕）" width="420px" append-to-body>
+      <div class="qr-body">
+        <img v-if="qrSessionId" :src="qrSrc" alt="签到二维码" class="qr-img" @error="onQrError" />
+        <p v-if="qrLoadFailed" class="qr-err">二维码加载失败，请检查后端二维码组件（pip install qrcode）</p>
+        <p class="qr-hint">
+          每次发起签到都会生成新的二维码。学生签到拍照时，需将本二维码与本人脸部一起拍入画面，后端会从照片中解码比对。
+        </p>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="qrVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { teacherApi } from '@/api/teacher';
@@ -117,6 +132,16 @@ const starting = ref(false);
 const endingId = ref<number | null>(null);
 const useDefault = ref(false);
 const mapVisible = ref(false);
+
+// 签到二维码弹窗
+const qrVisible = ref(false);
+const qrSessionId = ref<number | null>(null);
+const qrLoadFailed = ref(false);
+const qrSrc = computed(() => {
+  if (!qrSessionId.value) return '';
+  // ?t= 防止浏览器缓存旧二维码
+  return `/api/teacher/checkin/${qrSessionId.value}/qr?t=${Date.now()}`;
+});
 
 const form = reactive({
   course_id: '',
@@ -213,13 +238,27 @@ async function onStart() {
       duration_minutes: form.duration_minutes,
     });
     ElMessage.success(`签到已发起${data.used_default ? '(默认坐标)' : ''}`);
+    // 发起成功后弹出二维码（每次签到 token 均不同，供学生拍照核验）
+    qrSessionId.value = data.id;
+    qrLoadFailed.value = false;
+    qrVisible.value = true;
     await loadSessions();
-    router.push(`/teacher/checkin/${data.id}`);
   } catch {
     /* http.ts 已 toast */
   } finally {
     starting.value = false;
   }
+}
+
+// 查看某个会话的二维码（可再次投影）
+function showQr(row: CheckinSession) {
+  qrSessionId.value = row.id;
+  qrLoadFailed.value = false;
+  qrVisible.value = true;
+}
+
+function onQrError() {
+  qrLoadFailed.value = true;
 }
 
 async function onEnd(id: number) {
@@ -276,6 +315,28 @@ onMounted(() => {
   color: var(--absent);
   font-size: 12px;
   margin-top: 4px;
+}
+.qr-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.qr-img {
+  width: 320px;
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.qr-err {
+  color: var(--absent);
+  font-size: 13px;
+}
+.qr-hint {
+  color: var(--text-sub);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
 }
 .card-header {
   display: flex;

@@ -9,6 +9,7 @@ pydantic>=2.6
 insightface>=0.7.3
 opencv-python>=4.9
 numpy>=1.24
+qrcode>=7.4
 onnxruntime>=1.17
 httpx>=0.27
 openpyxl>=3.1

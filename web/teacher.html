@@ -126,7 +126,7 @@
   /* ---------- 课堂签到 ---------- */
   function renderCheckin(el) {
     el.innerHTML =
-      '<div class="card" style="margin-bottom:16px"><div class="card-title">发起签到（人脸 + 定位双因子）</div>' +
+      '<div class="card" style="margin-bottom:16px"><div class="card-title">发起签到（人脸 + 定位 + 二维码）</div>' +
       '<div class="row"><select id="ck-course" class="input" style="flex:1;min-width:200px"></select>' +
       '<input id="ck-min" type="number" class="input" value="5" style="width:90px" title="时长(分钟)">' +
       '<input id="ck-range" type="number" class="input" value="200" style="width:90px" title="围栏(米)">' +
@@ -134,11 +134,33 @@
       '<div class="row" style="margin-top:8px"><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ck-skip-geo" checked style="cursor:pointer"> 跳过定位（用默认坐标直接发起）</label>' +
       '<button class="btn btn-outline btn-sm" id="ck-test-geo" style="margin-left:8px">测试定位</button>' +
       '<span id="ck-geo-status" class="light" style="margin-left:12px"></span></div>' +
-      '<div class="light" style="margin-top:8px">学生需在围栏内通过人脸识别签到；发起后学生端会收到顶部横幅提醒。</div></div>' +
+      '<div class="light" style="margin-top:8px">发起后自动弹出本次签到二维码（每次签到都不同），请投影到大屏；学生拍照时须将二维码与本人脸部一起拍入画面。发起后学生端会收到顶部横幅提醒。</div></div>' +
       '<div class="card"><div class="card-title">签到会话</div><div id="ck-sessions"></div></div>';
 
     courseOptions("ck-course");
     loadSessions();
+
+    // 弹出签到二维码（投影到大屏，学生拍照须拍入画面）
+    function showQrModal(sid) {
+      var old = document.getElementById("qr-mask");
+      if (old) old.remove();
+      var d = document.createElement("div");
+      d.id = "qr-mask";
+      d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;";
+      d.innerHTML =
+        '<div style="background:#fff;border-radius:12px;padding:24px;width:360px;text-align:center">' +
+        '<div style="font-weight:600;font-size:15px;margin-bottom:12px">签到二维码（请投影到大屏）</div>' +
+        '<img src="/api/teacher/checkin/' + sid + '/qr" style="width:300px;height:300px;border:1px solid #e2e8f0;border-radius:8px"' +
+        ' onerror="this.style.display=\'none\';document.getElementById(\'qr-fallback\').style.display=\'block\'">' +
+        '<div id="qr-fallback" style="display:none;color:#dc2626;font-size:13px;padding:12px">二维码加载失败，请检查后端二维码组件（pip install qrcode）</div>' +
+        '<div style="color:#64748b;font-size:12.5px;margin:12px 0 16px;text-align:left;line-height:1.6">' +
+        '每次发起签到都会生成新的二维码。学生签到拍照时，需将本二维码与本人脸部一起拍入画面，后端会从照片中解码比对。</div>' +
+        '<button class="btn btn-primary" id="qr-close">关闭</button></div>';
+      document.body.appendChild(d);
+      d.addEventListener("click", function (e) {
+        if (e.target === d || e.target.id === "qr-close") d.remove();
+      });
+    }
 
     function loadSessions() {
       api.get("/api/teacher/checkin/sessions").then(function (list) {
@@ -151,7 +173,8 @@
           var st = s.status === 1 ? '<span class="live">进行中</span>' :
             '<span class="badge" style="background:var(--muted-soft);color:var(--muted)">已结束</span>';
           var act = s.status === 1
-            ? '<div class="row"><button class="btn btn-primary btn-sm" data-view="' + s.id + '">看板</button>' +
+            ? '<div class="row"><button class="btn btn-outline btn-sm" data-qr="' + s.id + '">二维码</button>' +
+              '<button class="btn btn-primary btn-sm" data-view="' + s.id + '">看板</button>' +
               '<button class="btn btn-danger btn-sm" data-end="' + s.id + '">结束</button></div>'
             : '<button class="btn btn-outline btn-sm" data-view="' + s.id + '">看板</button>';
           return "<tr><td>" + st + "</td><td>" + esc(s.course_name || s.course_id) + "</td><td>" +
@@ -173,6 +196,9 @@
         // 事件绑定（用 Array.call 避免旧浏览器 NodeList.forEach 兼容问题）
         Array.prototype.forEach.call($("ck-sessions").querySelectorAll("button[data-view]"), function (b) {
           b.addEventListener("click", function () { viewDashboard(b.getAttribute("data-view")); });
+        });
+        Array.prototype.forEach.call($("ck-sessions").querySelectorAll("button[data-qr]"), function (b) {
+          b.addEventListener("click", function () { showQrModal(b.getAttribute("data-qr")); });
         });
         Array.prototype.forEach.call($("ck-sessions").querySelectorAll("button[data-end]"), function (b) {
           b.addEventListener("click", async function () {
@@ -401,14 +427,15 @@
           }
         }
         btn.textContent = "发起中…";
-        await api.post("/api/teacher/checkin/start", {
+        var d = await api.post("/api/teacher/checkin/start", {
           course_id: cid,
           duration_minutes: parseInt($("ck-min").value, 10) || 5,
           range_meters: parseInt($("ck-range").value, 10) || 200,
           lat: lat, lng: lng
         });
-        alert("签到已发起，学生端将收到提醒" + (lat ? "（定位：" + lat.toFixed(5) + "," + lng.toFixed(5) + "）" : "（未获取定位，已用默认坐标）"));
         loadSessions();
+        // 发起成功后自动弹出本次签到二维码
+        showQrModal(d.id);
       } catch (e) { alert(e.message || "发起失败"); }
       btn.disabled = false; btn.textContent = "发起签到";
     });

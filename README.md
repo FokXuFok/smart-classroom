@@ -1,8 +1,8 @@
-# 全流程智慧课堂系统
+﻿# 全流程智慧课堂系统
 
 面向高校课堂的"教-学-评-管"一体化单机演示系统：覆盖 **教师发起签到 → 学生人脸+定位签到 → 课堂互动 → 编程作业在线评测 → AI 批改反馈 → 学业预警 → 辅导员/管理员管理** 的全流程闭环。
 
-对应申报书说明：原"三重核验"调整为 **人脸识别（InsightFace）+ 定位围栏（200 米）+ 指纹核验（接口预留）** 的双重实人核验 + 指纹扩展位方案。
+对应申报书说明：签到核验采用三重因子：**人脸识别（InsightFace 512 维比对）+ 定位围栏（200 米）+ 签到二维码核验（防翻拍代签）**。每次发起签到生成随机二维码投影到大屏，学生拍照时须将二维码与本人脸部一起拍入画面，后端从照片中解码比对，杜绝离线照片/翻拍旧照代签。
 
 特色能力：**SSE 实时签到大屏**（学生签到即时推送教师看板，无需刷新）、**ECharts 可视化**（签到趋势/互动统计/预警学生出勤率图表）、**Excel 一键导出**（单次考勤表 + 作业成绩册 .xlsx）。
 
@@ -46,10 +46,11 @@ python main.py --seed
 │   ├── main.py              # FastAPI 入口：API 路由优先 + /uploads + web 静态托管
 │   ├── api/                 # 路由：auth/student/teacher/counselor/admin/homework/interaction/ai/notification
 │   ├── core/
-│   │   ├── face_engine.py   # InsightFace 人脸引擎（嵌入/比对/两帧活体）
+│   │   ├── face_engine.py   # InsightFace 人脸引擎（嵌入/比对/维度防御）
 │   │   ├── geofence.py      # Haversine 定位围栏
 │   │   ├── events.py        # SessionBus 事件总线（SSE 实时推送）
-│   │   ├── fingerprint.py   # 指纹核验（预留）
+│   │   ├── qr_check.py     # 签到二维码核验（cv2 解码 + token 比对）
+│   ├── fingerprint.py   # 指纹核验（微信 SOTER，预留）
 │   │   ├── ai_client.py     # 阿里百炼（OpenAI 兼容）AI 客户端
 │   │   ├── security.py      # bcrypt + JWT
 │   │   └── judge/           # 本地沙箱评测 + 判分/成绩册/AI 反馈/查重
@@ -59,16 +60,18 @@ python main.py --seed
 │   ├── init_db.py           # 数据库增量升级（幂等，只补不删）
 │   └── seed_demo.py         # 演示种子数据（幂等）
 ├── web/                     # 四端静态前端（index/student/teacher/counselor/admin + echarts）
+├── frontend/                # Vue3 + Element Plus 教师端（Vite 构建，开发端口 5173）
+├── WeChatapp/               # 微信小程序学生端（原生开发）
 ├── uploads/                 # 签到自拍/人脸照片等上传文件（/uploads 鉴权访问）
 ├── logs/                    # 运行日志（按天滚动，保留 14 天；不入库）
-└── tests/                   # pytest（116 用例）
+└── tests/                   # pytest（120 用例）
 ```
 
 ## 技术栈 / 架构
 
-- **单体架构**：FastAPI + Uvicorn 单进程；MySQL（SQLAlchemy ORM）；前端为原生 HTML/JS 静态页 + ECharts（本地内置，离线可用），由 FastAPI StaticFiles 直接托管。
+- **单体架构**：FastAPI + Uvicorn 单进程；MySQL（SQLAlchemy ORM）；三端前端并行开发——原生 HTML/JS 静态页（web/，FastAPI StaticFiles 托管）+ Vue3 + Element Plus（frontend/，Vite 构建）+ 微信小程序（WeChatapp/，学生端原生开发）。
 - **人脸模型预热**：启动器后台线程预加载 InsightFace buffalo_l，首次人脸签到无需现场等待模型加载。
-- **签到核心**：InsightFace（buffalo_l，ONNXRuntime）512 维人脸嵌入余弦比对（阈值 0.40）+ Haversine 200 米定位围栏 + 相似度不足转人工复核；指纹核验接口预留不阻断。
+- **签到核心（三重因子）**：InsightFace（buffalo_l，ONNXRuntime）512 维人脸嵌入余弦比对（阈值 0.40）+ Haversine 200 米定位围栏 + **签到二维码核验**（教师发起签到生成随机 qr_token 二维码投影大屏，学生拍照须将二维码与本人脸部一起拍入画面，后端用 cv2.QRCodeDetector 从照片解码比对，防止翻拍旧照代签）；相似度不足转人工复核；指纹核验（微信 SOTER）接口预留不阻断。
 - **实时推送**：教师签到看板走 SSE（`/api/teacher/checkin/{id}/stream`），学生签到/待复核/审核结果/会话结束事件即时上屏；进程内 SessionBus 总线，生产可换 Redis Pub/Sub。
 - **作业评测**：本地沙箱子进程运行（Python 开箱即用，C/Java 需系统编译器），按用例权重计分，成绩册取历史最高分；阿里百炼 AI 生成 markdown 批改反馈，AI 不可用自动降级为规则反馈；3-gram Jaccard 代码查重；考勤/成绩册可导出 .xlsx（openpyxl）。
 - **AI**：阿里百炼 OpenAI 兼容接口（deepseek-v4-pro-0813），Key 从 `.env` 的 `DASHSCOPE_API_KEY` 读取。
@@ -89,7 +92,7 @@ python main.py --seed
 python -m pytest tests/ -q
 ```
 
-当前 116 个用例全部通过（登录自动判身份、统一 cookie 串号回归、注册/审批、签到鉴权、人脸引擎、围栏、作业评测、预警、管理端、SSE 实时流、Excel 导出、批量通知、SQL 聚合统计等）。
+当前 120 个用例全部通过（登录自动判身份、多角色 cookie、注册/审批、签到鉴权、人脸引擎、围栏、**二维码核验**、作业评测、预警、管理端、SSE 实时流、Excel 导出、批量通知、SQL 聚合统计等）。
 
 ## 安全注意
 
