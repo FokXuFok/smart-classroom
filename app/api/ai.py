@@ -14,6 +14,7 @@ from sqlalchemy import or_
 from app.api.deps import CurrentUser, get_db, require_roles
 from app.core.ai_client import (
     AiUnavailable,
+    analyze_errors,
     grade_feedback,
     qa_answer,
     teacher_assist,
@@ -362,6 +363,106 @@ async def ai_grade_all(
             f"AI 批改完成：成功 {graded}，降级 {degraded}，失败 {failed}"
             "（单次最多批改 20 条，可重复调用）"
         ),
+    )
+
+
+# ---------- 教师端：班级错误分析 Agent ----------
+
+@router.post("/homework/{homework_id}/analyze-errors")
+def ai_analyze_errors(
+    homework_id: int,
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """班级错误分析 Agent：聚合本作业所有已评测提交的错误样本,
+    调用 analyze_errors 生成「高频错误统计 + 讲评建议」markdown。
+
+    错误样本来源(按优先级):
+    1. 编译错误 (compile_error 非空)
+    2. 未通过的测试用例 (test_results JSON 中 passed=false 的条目, 剥离 expected/stdout)
+    3. AI 反馈中的「错误诊断」片段(可选,辅助)
+    AiUnavailable → 6001。"""
+    hw = db.get(Homework, homework_id)
+    if hw is None:
+        raise BizError(404, "作业不存在")
+    if hw.teacher_id != current.user.teacher_no:
+        raise BizError(403, "无权限操作该作业")
+
+    submissions = (
+        db.query(SubmissionRecord)
+        .filter(
+            SubmissionRecord.homework_id == hw.id,
+            SubmissionRecord.status.in_([1, 2]),
+        )
+        .order_by(SubmissionRecord.id.desc())
+        .limit(30)  # 单次分析上限,控制 AI 输入长度
+        .all()
+    )
+    if not submissions:
+        raise BizError(400, "该作业暂无已评测提交,无法分析错误")
+
+    samples: list = []
+    for sub in submissions:
+        sid = sub.student_id
+        # 1) 编译错误优先
+        if sub.compile_error and sub.compile_error.strip():
+            err = sub.compile_error.strip()[:300]
+            samples.append(f"学生 {sid}（编译错误）：{err}")
+            continue
+        # 2) 未通过的测试用例
+        try:
+            results = json.loads(sub.test_results or "[]")
+        except ValueError:
+            results = []
+        failed_cases = [
+            r for r in results
+            if isinstance(r, dict) and not r.get("passed", True)
+        ]
+        if failed_cases:
+            # 剥离 expected/stdout 防止复述答案
+            case_lines = []
+            for r in failed_cases[:5]:
+                case = {
+                    k: v for k, v in r.items()
+                    if k not in ("expected", "stdout")
+                }
+                case_lines.append(json.dumps(case, ensure_ascii=False)[:200])
+            samples.append(
+                f"学生 {sid}（未通过 {len(failed_cases)} 个用例）："
+                + " | ".join(case_lines)
+            )
+        elif sub.ai_feedback:
+            # 3) 无失败用例但有 AI 反馈:取诊断片段(简短)
+            samples.append(
+                f"学生 {sid}（AI 反馈片段）："
+                + sub.ai_feedback[:200]
+            )
+
+    if not samples:
+        raise BizError(400, "所有提交均无错误样本(全部通过),无需错误分析")
+
+    try:
+        report = analyze_errors(
+            hw.title or f"作业#{hw.id}",
+            hw.programming_language or "python",
+            samples,
+        )
+    except AiUnavailable:
+        raise _ai_unavailable()
+    grade_log.info(
+        "AI 错误分析完成 homework=%s 样本数=%d 输出长度=%d",
+        homework_id, len(samples), len(report),
+    )
+    return ok(
+        {
+            "homework_id": hw.id,
+            "homework_title": hw.title,
+            "language": hw.programming_language,
+            "sample_count": len(samples),
+            "submission_count": len(submissions),
+            "report": report,
+        },
+        message=f"错误分析完成,聚合 {len(samples)} 条样本",
     )
 
 

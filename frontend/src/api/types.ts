@@ -59,6 +59,30 @@ export interface Course {
   student_count?: number;
 }
 
+// 课程上课安排(大学合班授课:一门课一行,含教室/时间/选课人数)
+export interface CourseTeachingSlot {
+  weekday: number; // 1-7
+  start_time: string; // HH:mm
+  end_time: string; // HH:mm
+  weeks: string | null;
+  classroom: string | null;
+}
+
+export interface CourseTeachingRow {
+  course_id: string;
+  course_name: string;
+  credit: number | null;
+  hours: number | null;
+  semester: string | null;
+  class_id: string | null; // 预留(合班模型下为空)
+  class_name: string | null;
+  student_count: number; // 课程选课人数
+  classroom: string | null;
+  classrooms: string[];
+  times: CourseTeachingSlot[];
+  arranged: boolean; // 是否有课表排课(教室/时间)
+}
+
 // 签到会话
 export interface CheckinSession {
   id: number;
@@ -426,4 +450,90 @@ export interface AdminAudit {
   target_id: string | null;
   detail: string | null;
   create_time: string;
+}
+
+// ============ AI 模块 ============
+
+// AI 备课助手响应
+export interface AiAssistResp {
+  course_id: string;
+  topic: string;
+  content: string;
+}
+
+// 答疑热词
+export interface AiHotword {
+  word: string;
+  count: number;
+}
+
+// AI 整作业批改结果
+export interface AiGradeAllResp {
+  graded: number;
+  failed: number;
+  degraded: number;
+}
+
+// AI 班级错误分析报告
+export interface AiErrorReport {
+  homework_id: number;
+  homework_title: string;
+  language: string;
+  sample_count: number;
+  submission_count: number;
+  report: string; // markdown
+}
+
+// 知识库条目
+export interface AiKnowledge {
+  id: number;
+  course_id: string | null;
+  subject: string | null;
+  title: string;
+  content: string;
+  difficulty: number;
+  sort_order: number;
+  status: number;
+  create_time: string;
+  update_time: string | null;
+}
+
+export interface AiKnowledgePayload {
+  course_id: string;
+  title: string;
+  content?: string;
+  subject?: string | null;
+  difficulty?: number;
+  sort_order?: number;
+  status?: number;
+}
+
+// 评分规则
+export interface AiRule {
+  id: number;
+  course_id: string | null;
+  subject: string | null;
+  name: string;
+  content: string;
+  rule_type: string; // score_point / deduct
+  weight: number;
+  max_score: number;
+  criteria: string | null;
+  sort_order: number;
+  status: number;
+  create_time: string;
+  update_time: string | null;
+}
+
+export interface AiRulePayload {
+  course_id?: string | null;
+  name: string;
+  content: string;
+  subject?: string | null;
+  rule_type?: string; // score_point / deduct
+  weight?: number;
+  max_score?: number;
+  criteria?: string | null;
+  sort_order?: number;
+  status?: number;
 }

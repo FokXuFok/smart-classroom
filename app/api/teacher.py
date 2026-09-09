@@ -23,6 +23,7 @@ from app.models import (
     CheckinSession,
     Course,
     Enrollment,
+    Schedule,
     Student,
 )
 from app.schemas.checkin import ReviewReq, StartCheckinReq
@@ -557,6 +558,78 @@ def my_courses(
                 "hours": c.hours,
                 "semester": c.semester,
                 "student_count": count_by_course.get(c.course_code, 0),
+            }
+        )
+    return ok(data)
+
+
+# ---------- 我的课程 · 上课安排（大学合班授课,按课程聚合） ----------
+
+@router.get("/courses/teaching")
+def my_course_teaching(
+    current: CurrentUser = Depends(require_roles("teacher")),
+    db=Depends(get_db),
+):
+    """我的课程（按课程聚合一行），含：选课人数、教室、上课时间。
+    大学课堂通常多个行政班合班上课（桂林信息科技学院），故不以班级拆行/分班；
+    教室与上课时间取课表 schedule 中该课程全部时段的并集。"""
+    courses = (
+        db.query(Course)
+        .filter(Course.teacher_id == current.user.teacher_no, Course.status == 1)
+        .order_by(Course.course_code)
+        .all()
+    )
+    if not courses:
+        return ok([])
+    code_list = [c.course_code for c in courses]
+
+    # 课程级选课人数
+    total_by = dict(
+        db.query(Enrollment.course_id, func.count(Enrollment.id))
+        .filter(Enrollment.course_id.in_(code_list), Enrollment.status == 1)
+        .group_by(Enrollment.course_id)
+        .all()
+    )
+
+    # 该课程全部上课时段(可能合班多时段/多教室,一并展示)
+    sched_rows = (
+        db.query(Schedule)
+        .filter(Schedule.course_id.in_(code_list))
+        .order_by(Schedule.weekday, Schedule.start_time)
+        .all()
+    )
+    sched_by_course: dict = {}
+    for s in sched_rows:
+        sched_by_course.setdefault(s.course_id, []).append(s)
+
+    data = []
+    for c in courses:
+        slots = sched_by_course.get(c.course_code, [])
+        times_info = [
+            {
+                "weekday": t.weekday,
+                "start_time": t.start_time.strftime("%H:%M"),
+                "end_time": t.end_time.strftime("%H:%M"),
+                "weeks": t.weeks,
+                "classroom": t.classroom,
+            }
+            for t in slots
+        ]
+        classrooms = sorted({t.classroom for t in slots if t.classroom})
+        data.append(
+            {
+                "course_id": c.course_code,
+                "course_name": c.course_name,
+                "credit": float(c.credit) if c.credit is not None else None,
+                "hours": c.hours,
+                "semester": c.semester,
+                "class_id": None,
+                "class_name": None,
+                "student_count": total_by.get(c.course_code, 0),
+                "classroom": classrooms[0] if classrooms else None,
+                "classrooms": classrooms,
+                "times": times_info,
+                "arranged": bool(times_info),
             }
         )
     return ok(data)

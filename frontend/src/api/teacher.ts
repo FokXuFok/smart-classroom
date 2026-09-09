@@ -1,6 +1,7 @@
 import http from './http';
 import type {
   Course,
+  CourseTeachingRow,
   CheckinSession,
   StartCheckinResp,
   DashboardData,
@@ -10,6 +11,9 @@ import type {
 export const teacherApi = {
   // 我的课程
   myCourses: () => http.get<Course[]>('/teacher/courses'),
+
+  // 我的课程·上课安排(大学合班授课,按课程聚合:选课人数/教室/上课时间)
+  courseTeaching: () => http.get<CourseTeachingRow[]>('/teacher/courses/teaching'),
 
   // 发起签到
   startCheckin: (payload: {

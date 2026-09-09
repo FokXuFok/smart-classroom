@@ -82,6 +82,14 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/teacher/TeacherInteract.vue'),
         meta: { title: '点名互动', menu: { icon: 'ChatDotRound', order: 8 } },
       },
+      {
+        path: 'ai',
+        component: () => import('@/views/teacher/TeacherAI.vue'),
+        meta: {
+          title: 'AI 助教',
+          menu: { icon: 'MagicStick', order: 9 },
+        },
+      },
     ],
   },
   {

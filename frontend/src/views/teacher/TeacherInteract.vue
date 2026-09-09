@@ -58,6 +58,43 @@
     </el-card>
 
     <el-card>
+      <template #header><span class="card-title">记录互动（提问 / 评分）</span></template>
+      <div class="record-form">
+        <el-input
+          v-model="recordForm.studentNo"
+          placeholder="学生学号（必填）"
+          style="width: 160px"
+          clearable
+        />
+        <el-select v-model="recordForm.type" style="width: 120px">
+          <el-option label="提问" value="question" />
+          <el-option label="评分" value="rating" />
+        </el-select>
+        <el-input
+          v-model="recordForm.content"
+          :placeholder="recordForm.type === 'rating' ? '评分依据（可留空）' : '问题内容'"
+          style="flex: 1; min-width: 200px"
+          clearable
+        />
+        <el-input-number
+          v-if="recordForm.type === 'rating'"
+          v-model="recordForm.score"
+          :min="1"
+          :max="5"
+          :step="1"
+        />
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="!courseId"
+          @click="onSaveRecord"
+        >
+          保存
+        </el-button>
+      </div>
+    </el-card>
+
+    <el-card>
       <template #header><span class="card-title">互动历史</span></template>
       <el-table :data="list" v-loading="listLoading" stripe>
         <el-table-column prop="student_name" label="学生" width="120">
@@ -83,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { teacherApi } from '@/api/teacher';
 import { interactionApi } from '@/api/interaction';
@@ -99,6 +136,20 @@ const picked = ref<RandomPickResult | null>(null);
 const stats = ref<InteractionStats | null>(null);
 const list = ref<Interaction[]>([]);
 const listLoading = ref(false);
+
+// 记录互动表单(提问/评分)
+const recordForm = reactive<{
+  studentNo: string;
+  type: 'question' | 'rating';
+  content: string;
+  score: number;
+}>({
+  studentNo: '',
+  type: 'question',
+  content: '',
+  score: 5,
+});
+const saving = ref(false);
 
 const typePieOption = computed(() => {
   const byType = stats.value?.by_type || {};
@@ -198,6 +249,43 @@ async function onRandomPick() {
   }
 }
 
+async function onSaveRecord() {
+  if (!courseId.value) {
+    ElMessage.warning('请先选择课程');
+    return;
+  }
+  const studentNo = recordForm.studentNo.trim();
+  if (!studentNo) {
+    ElMessage.warning('请输入学生学号');
+    return;
+  }
+  if (recordForm.type === 'rating') {
+    if (!recordForm.score || recordForm.score < 1 || recordForm.score > 5) {
+      ElMessage.warning('评分必须为 1-5');
+      return;
+    }
+  }
+  saving.value = true;
+  try {
+    await interactionApi.create({
+      course_id: courseId.value,
+      student_id: studentNo,
+      interaction_type: recordForm.type,
+      content: recordForm.content.trim() || undefined,
+      score: recordForm.type === 'rating' ? recordForm.score : undefined,
+    });
+    ElMessage.success('互动记录已保存');
+    recordForm.studentNo = '';
+    recordForm.content = '';
+    loadStats();
+    loadList();
+  } catch {
+    /* http.ts 已 toast */
+  } finally {
+    saving.value = false;
+  }
+}
+
 onMounted(loadCourses);
 </script>
 
@@ -232,5 +320,11 @@ onMounted(loadCourses);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 20px;
+}
+.record-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 </style>
